@@ -1,5 +1,7 @@
 <p align="center">
   <img src="clipx/assets/branding/clipx-icon.png" width="128" height="128" alt="Ícone do ClipX: clipboard com X coral sobre grafite" />
+  <br>
+  <a href="LICENSE"><img alt="Licença MIT" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
 </p>
 
 # ClipX
