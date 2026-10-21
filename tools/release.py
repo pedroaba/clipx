@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,19 @@ def run(command, **kwargs):
     # Do not log command arguments: signing/notarization commands may contain credentials.
     print('Executando:', Path(str(command[0])).name, flush=True)
     return subprocess.run(list(map(str, command)), cwd=ROOT, check=True, **kwargs)
+
+
+def retry_run(command, attempts=3, delay=15, **kwargs):
+    # Managed macOS runners sporadically fail hdiutil with "Resource busy"
+    # while diskimagesd/Spotlight hold resources; a retry usually succeeds.
+    for attempt in range(attempts):
+        try:
+            return run(command, **kwargs)
+        except subprocess.CalledProcessError as error:
+            if attempt == attempts - 1:
+                raise
+            print(f'hdiutil falhou (código {error.returncode}); nova tentativa em {delay} s.', flush=True)
+            time.sleep(delay)
 
 
 def smoke(binary):
@@ -164,19 +178,24 @@ def macos_package(frozen, work, output, notarized):
     (stage / 'Applications').symlink_to('/Applications')
     (stage / 'Instalar.txt').write_text('Arraste ClipX.app para Applications.\nRequer macOS 14 ou posterior.\n')
     artifact = output / f'ClipX-{project_version()}-macos-{architecture()}.dmg'
-    run(['hdiutil', 'create', '-volname', 'ClipX', '-srcfolder', stage, '-format', 'UDZO', '-ov', artifact])
+    retry_run(['hdiutil', 'create', '-volname', 'ClipX', '-srcfolder', stage, '-format', 'UDZO', '-ov', artifact])
     if os.environ.get('MACOS_SIGNING_IDENTITY'):
         run(['codesign', '--sign', os.environ['MACOS_SIGNING_IDENTITY'], '--timestamp', artifact])
     if notarized:
         notarize(artifact)
-    run(['hdiutil', 'verify', artifact])
+    retry_run(['hdiutil', 'verify', artifact])
     # A DMG is mounted read-only and its installed executable is exercised too.
     mount = work / 'mounted'
-    run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, artifact])
+    retry_run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, artifact])
     try:
         smoke(mount / 'ClipX.app/Contents/MacOS/clipx')
     finally:
-        run(['hdiutil', 'detach', mount])
+        # Retry with force: a failed detach leaves volumes behind that busy
+        # the next image operation on the runner.
+        try:
+            retry_run(['hdiutil', 'detach', mount], attempts=2, delay=10)
+        except subprocess.CalledProcessError:
+            run(['hdiutil', 'detach', '-force', mount])
     checksums([artifact], output, f'macos-{architecture()}')
     return artifact
 
