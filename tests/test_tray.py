@@ -1,13 +1,14 @@
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["QT_QPA_PLATFORMTHEME"] = "generic"
 
-from PyQt6.QtCore import QEventLoop, QTimer, Qt
+from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer, Qt
 from PyQt6.QtNetwork import QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
@@ -46,6 +47,19 @@ class TrayTests(unittest.TestCase):
                 )
         self.storage.toggle_pin(1)
         self.tray.refresh_menu()
+
+    def wait_for(self, condition, timeout_ms=5000):
+        """Processa eventos Qt até condition() ser atendida ou falha com contexto.
+
+        A entrega de sinais do QLocalServer depende do event loop e não tem
+        prazo determinístico; em runners lentos, uma janela fixa curta (ex.:
+        50 ms) termina antes do servidor despachar readyRead/newConnection.
+        """
+        deadline = time.monotonic() + timeout_ms / 1000
+        while not condition():
+            if time.monotonic() > deadline:
+                self.fail(f"Condição não atendida em {timeout_ms} ms")
+            QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
 
     def test_recent_five_ignore_pin_priority_and_refresh(self):
         self.populate()
@@ -146,9 +160,7 @@ class TrayTests(unittest.TestCase):
             self.assertTrue(socket.waitForConnected(500))
             socket.write(b"show\n")
             socket.flush()
-            loop = QEventLoop()
-            QTimer.singleShot(50, loop.quit)
-            loop.exec()
+            self.wait_for(lambda: opened)
             self.assertEqual(opened, [True])
             socket.close()
             instance.close()
@@ -164,9 +176,7 @@ class TrayTests(unittest.TestCase):
             primary.listen(lambda activation_token="": received.append(activation_token))
             secondary = DesktopInstance(runtime=self.temp.name)
             self.assertFalse(secondary.acquire(activation_token="gnome-token"))
-            loop = QEventLoop()
-            QTimer.singleShot(50, loop.quit)
-            loop.exec()
+            self.wait_for(lambda: received)
             self.assertEqual(received, ["gnome-token"])
 
     def test_foreground_request_uses_the_token_for_the_correct_window(self):
