@@ -1,0 +1,20 @@
+[project]
+name = "clipx"
+version = "0.1.0"
+description = "A Raycast-inspired clipboard history manager for Linux and macOS"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "PyQt6>=6.6.0",
+    "pygments>=2.17.0",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+    "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=11.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+clipx = "clipx.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
