@@ -102,3 +102,15 @@ Validação em 21/10/2026: 111 testes (101 aprovados, 10 ignorados). No cenário
 com 120 textos fictícios e 100 resultados visíveis, oito consultas progressivas
 caíram de 45–77 ms por atualização para 1,6–1,9 ms, incluindo processEvents offscreen
 sob cProfile. Essa medição descreve a fixture; não é garantia para qualquer histórico.
+
+## Identidade do aplicativo
+
+`foundations/branding.py` fornece o PNG do projeto para janelas e QApplication,
+separadamente do glifo monocromático da barra de menus. A imagem e o prompt de geração
+ficam em `clipx/assets/branding/`. O README usa o mesmo arquivo.
+
+`SystemDialog` identifica diálogos de configurações e sincroniza sua presença no Dock
+pelo adaptador `platforms/dock.py`. No macOS, o processo assume a política Regular
+quando há um diálogo visível e volta a Accessory após fechar o último, mantendo a
+pesquisa como utilitário da barra de menus. O teste nativo cobre múltiplos diálogos.
+O instalador Linux aponta o arquivo desktop para o ícone local do projeto.

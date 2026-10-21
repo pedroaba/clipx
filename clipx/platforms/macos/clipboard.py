@@ -1,5 +1,6 @@
 """Background pasteboard observation independent of Qt window activation."""
 import sys
+from clipx.processes import module_command
 from clipx.platforms.base import Result, Status
 
 SELF_TYPE = 'org.clipx.self'
@@ -23,7 +24,7 @@ class MacOSClipboardDriver:
         return self._pasteboard
 
     def listener_command(self, database):
-        return [sys.executable, '-m', 'clipx.capture', str(database), '--watch-macos']
+        return module_command('clipx.capture', database, '--watch-macos')
 
     def poll(self, capture):
         board = self.pasteboard

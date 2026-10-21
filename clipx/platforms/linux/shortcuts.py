@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+from clipx.processes import module_command
 
 import re
 from PyQt6.QtCore import Qt
@@ -236,7 +237,7 @@ class LinuxGlobalShortcut:
             self.run("set", schema, "name", repr("ClipX Clipboard Manager"))
             launcher = Path(__file__).resolve().parents[3] / "bin" / "clipx"
             command = ([str(launcher), "show"] if launcher.exists()
-                       else [sys.executable, "-m", "clipx.main", "show"])
+                       else module_command("clipx.main", "show"))
             self.run("set", schema, "command", repr(shlex.join(command)))
         self.run("set", schema, "binding", repr(binding))
         if self.read() != binding:

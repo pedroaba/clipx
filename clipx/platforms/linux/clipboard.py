@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+from clipx.processes import module_command
 from clipx.platforms.base import Result, Status
 
 def copy_to_clipboard(text: str) -> bool:
@@ -27,7 +28,7 @@ class LinuxClipboardDriver:
         self._stopped = None
 
     def listener_command(self, database):
-        capture = [sys.executable, "-m", "clipx.capture", str(database)]
+        capture = module_command("clipx.capture", database)
         if os.environ.get("DISPLAY"):
             return capture + ["--watch-x11"]
         return ["wl-paste", "--type", "text", "--watch", *capture]

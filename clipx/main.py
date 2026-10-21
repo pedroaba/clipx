@@ -34,6 +34,8 @@ def run_gui(start_hidden=False):
             os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
     app = QApplication(sys.argv)
+    from clipx.ui.foundations.branding import app_icon
+    app.setWindowIcon(app_icon())
     app.setApplicationName("ClipX")
     app.setDesktopFileName("clipx")
     app.setQuitOnLastWindowClosed(False)
@@ -49,7 +51,6 @@ def run_gui(start_hidden=False):
 
     window = ClipXMainWindow(storage=storage, platform=platform)
     tray = ClipXTray(storage, window, app)
-    app.setWindowIcon(tray.icon())
     instance.listen(tray.open_search)
     tray.show()
     if not start_hidden:
@@ -87,6 +88,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="ClipX - A modern Raycast-styled clipboard history manager for Linux and macOS"
     )
+    from clipx import __version__
+    parser.add_argument("--version", action="version", version="ClipX " + __version__)
     subparsers = parser.add_subparsers(dest="command")
 
     # Command: gui (default)

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ClipX
+Comment=Histórico local da área de transferência
+Exec=clipx show
+Icon=clipx
+Terminal=false
+StartupNotify=true
+StartupWMClass=ClipX
+Categories=Utility;

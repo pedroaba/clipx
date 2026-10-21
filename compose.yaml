@@ -1,0 +1,44 @@
+x-builder: &builder
+  build:
+    context: .
+    dockerfile: packaging/Dockerfile
+  image: clipx-builder:local
+  platform: ${BUILD_PLATFORM:-linux/amd64}
+  user: "${BUILD_UID:-1000}:${BUILD_GID:-1000}"
+  environment:
+    QT_QPA_PLATFORM: offscreen
+    XDG_CACHE_HOME: /tmp/clipx-cache
+    PYINSTALLER_CONFIG_DIR: /tmp/pyinstaller
+    RELEASE_TAG: ${RELEASE_TAG:-}
+    DEB_MAINTAINER: ${DEB_MAINTAINER:-ClipX contributors <maintainers@example.invalid>}
+  volumes:
+    - ./dist:/app/dist
+
+services:
+  linux-build:
+    <<: *builder
+    command: [linux]
+  linux-test:
+    <<: *builder
+    command: [test]
+    profiles: [test]
+
+  linux-install-test:
+    image: ubuntu:24.04
+    platform: ${BUILD_PLATFORM:-linux/amd64}
+    profiles: [test]
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      QT_QPA_PLATFORM: offscreen
+    volumes:
+      - ./dist:/packages:ro
+    command:
+      - sh
+      - -ec
+      - |
+        apt-get update
+        apt-get install --no-install-recommends -y /packages/clipx_*_$$(dpkg --print-architecture).deb
+        clipx --version
+        clipx _self-test
+        dpkg --remove clipx
+        test ! -e /usr/bin/clipx

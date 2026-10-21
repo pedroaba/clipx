@@ -209,3 +209,29 @@ class MacOSNativeTests(unittest.TestCase):
             effects.remove(dialog)
             dialog.close()
             dialog.deleteLater()
+
+    def test_brand_icon_and_dock_follow_visible_settings_dialogs(self):
+        import AppKit
+        from PyQt6.QtWidgets import QApplication
+        from clipx.ui.templates.window import SystemDialog
+        app = QApplication.instance() or QApplication([])
+        native = AppKit.NSApplication.sharedApplication()
+        previous = native.activationPolicy()
+        first, second = SystemDialog(), SystemDialog()
+        try:
+            self.assertFalse(first.windowIcon().isNull())
+            first.show()
+            second.show()
+            app.processEvents()
+            self.assertEqual(native.activationPolicy(), AppKit.NSApplicationActivationPolicyRegular)
+            self.assertIsNotNone(native.applicationIconImage())
+            first.close()
+            self.assertEqual(native.activationPolicy(), AppKit.NSApplicationActivationPolicyRegular)
+            second.close()
+            self.assertEqual(native.activationPolicy(), AppKit.NSApplicationActivationPolicyAccessory)
+        finally:
+            first.close()
+            second.close()
+            first.deleteLater()
+            second.deleteLater()
+            native.setActivationPolicy_(previous)

@@ -1,0 +1,140 @@
+name: Build installers and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    env:
+      BUILD_PLATFORM: linux/${{ matrix.arch }}
+      DEB_MAINTAINER: ${{ vars.DEB_MAINTAINER }}
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare output
+        run: |
+          mkdir -p dist
+          echo "BUILD_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "BUILD_GID=$(id -g)" >> "$GITHUB_ENV"
+      - name: Build container
+        run: docker compose build linux-build
+      - name: Test source
+        run: docker compose --profile test run --rm linux-test
+      - name: Build and verify DEB
+        run: docker compose run --rm linux-build
+      - name: Install, run and remove DEB in clean Ubuntu
+        run: docker compose --profile test run --rm linux-install-test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    env:
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.11.25'
+          enable-cache: true
+      - name: Install locked build dependencies
+        run: uv sync --frozen --group build --python 3.14.6
+      - name: Test source
+        run: uv run --frozen --group build python tools/release.py test
+      - name: Import signing certificate on release tags
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: uv run --frozen --group build python packaging/macos/signing.py
+      - name: Build and verify test DMG
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: uv run --frozen --group build python tools/release.py macos
+      - name: Build release DMG
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        shell: bash
+        run: |
+          if [ -n "$MACOS_SIGNING_IDENTITY" ]; then
+            uv run --frozen --group build python tools/release.py macos --notarize
+          else
+            uv run --frozen --group build python tools/release.py macos
+          fi
+      - name: Remove temporary signing keychain
+        if: always() && startsWith(github.ref, 'refs/tags/')
+        run: uv run --frozen --group build python packaging/macos/signing.py cleanup
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify all checksums
+        run: |
+          cd dist
+          for manifest in SHA256SUMS-*.txt; do sha256sum -c "$manifest"; done
+      - name: Publish installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.deb dist/*.dmg dist/SHA256SUMS-*.txt \
+            --verify-tag --title "ClipX $RELEASE_TAG" --generate-notes

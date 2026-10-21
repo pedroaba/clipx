@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="clipx/assets/branding/clipx-icon.png" width="128" height="128" alt="Ícone do ClipX: clipboard com X coral sobre grafite" />
+</p>
+
 # ClipX
 
 Histórico local da área de transferência para **Linux e macOS**, com interface compartilhada em PyQt6 e visual escuro inspirado no Raycast. Busca, filtros, prévias e preferências usam o mesmo código; captura, cópia, colagem, atalhos e material da janela têm drivers específicos do sistema.
@@ -64,7 +68,7 @@ Selecionar um item copia o texto e tenta colar no aplicativo que estava ativo an
 
 A colagem automática requer a autorização de Acessibilidade/controle do macOS. Sem ela, o texto continua copiado e pode ser colado manualmente. Use **Autorizar colagem no macOS** na barra de menus para abrir a solicitação nativa; o aplicativo não repete solicitações automaticamente. Restrições de leitura do clipboard também são respeitadas e aparecem como estado de captura.
 
-Ao executar por uv, a autorização pode ficar associada ao interpretador Python ou ao aplicativo lançador, e pode precisar ser revista quando o interpretador mudar. Esta entrega não inclui bundle `.app`, assinatura, notarização ou inicialização automática no login.
+Ao executar por uv, a autorização pode ficar associada ao interpretador Python ou ao aplicativo lançador, e pode precisar ser revista quando o interpretador mudar. O empacotamento gera bundle `.app` e DMG; assinatura Developer ID e notarização dependem dos secrets Apple descritos em [Builds e releases](packaging/README.md). Inicialização automática no login não está incluída.
 
 ### Material da janela
 
@@ -272,3 +276,23 @@ Permanecem verificações manuais: colagem autorizada em aplicativos de terceiro
 ### Regressão da bandeja no macOS 27
 
 Após o relato de encerramento ao clicar na bandeja, foi acrescentada uma proteção no driver macOS para a notificação `NSMenuDidBeginTrackingNotification` do Qt. O teste nativo reproduz a inscrição e entrega dessa notificação ao `QStatusItemDelegate`, sem consultar propriedades exclusivas de eventos de mouse. Os seis testes nativos macOS passaram após a correção.
+
+## Instaladores e release
+
+O projeto inclui [Docker Compose](compose.yaml) para gerar e testar instaladores Linux
+`.deb`, um empacotador nativo para `.dmg` e [workflow de release](.github/workflows/release.yml)
+com Linux e macOS nas arquiteturas amd64/arm64. Os instaladores incluem Python e Qt.
+
+```bash
+mkdir -p dist
+export BUILD_UID="$(id -u)" BUILD_GID="$(id -g)"
+docker compose build linux-build
+docker compose --profile test run --rm linux-test
+docker compose run --rm linux-build
+docker compose --profile test run --rm linux-install-test
+```
+
+No Mac, `uv run --frozen --group build python tools/release.py macos` gera o DMG após
+instalar o grupo de dependências de build. Docker gera Linux; macOS usa runner nativo.
+Confira [o guia completo](packaging/README.md) para build local, instalação, tags e
+secrets de assinatura/notarização Apple. Saídas em `dist/` são ignoradas pelo Git.
