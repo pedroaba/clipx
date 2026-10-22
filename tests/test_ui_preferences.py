@@ -91,6 +91,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertFalse(self.page.dirty())
         self.assertFalse(self.page.apply_button.isEnabled())
         self.assertEqual(self.window.ui_settings.load()['theme'], 'light')
+        self.assertEqual(self.page.footer.change_label.text(), 'Configurações aplicadas')
 
     def test_failure_preserves_live_state_and_draft_and_rolls_back_global(self):
         self.choose('theme', 'light')
@@ -102,6 +103,36 @@ class PreferencesTests(unittest.TestCase):
         self.assertTrue(self.page.dirty())
         self.backend.write.assert_any_call('Meta+V')
         self.assertIn('disk full', self.page.general_error.text())
+
+    def test_apply_shows_loading_during_save_and_restores_buttons(self):
+        self.choose('theme', 'light')
+        save = self.window.ui_settings.save
+
+        def saving(*args, **kwargs):
+            self.assertTrue(self.page.buttons.loading)
+            self.assertEqual(self.page.apply_button.text(), 'Aplicando…')
+            self.assertFalse(self.page.apply_button.icon().isNull())
+            self.assertFalse(self.page.apply_button.isEnabled())
+            self.assertFalse(self.page.buttons.cancel.isEnabled())
+            self.assertTrue(self.page.buttons._spinner.isActive())
+            save(*args, **kwargs)
+
+        with patch.object(self.window.ui_settings, 'save', side_effect=saving):
+            self.page.apply_changes()
+        self.assertFalse(self.page.buttons.loading)
+        self.assertFalse(self.page.buttons._spinner.isActive())
+        self.assertEqual(self.page.apply_button.text(), 'Aplicar')
+        self.assertTrue(self.page.apply_button.icon().isNull())
+        self.assertTrue(self.page.buttons.cancel.isEnabled())
+        self.assertFalse(self.page.apply_button.isEnabled())
+
+        self.choose('theme', 'dark')
+        with patch.object(self.window.ui_settings, 'save', side_effect=OSError('disk full')):
+            self.page.apply_changes()
+        self.assertFalse(self.page.buttons.loading)
+        self.assertTrue(self.page.apply_button.isEnabled())
+        self.assertTrue(self.page.buttons.cancel.isEnabled())
+        self.assertFalse(self.page.general_error.isHidden())
 
     def test_restore_is_scoped_and_cancel_discards(self):
         self.choose('theme', 'light')
@@ -125,6 +156,21 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.shortcuts['pin'], 'Ctrl+L')
         self.assertFalse(self.page.dirty())
         self.assertTrue(self.page.isVisible())
+
+    def test_apply_clears_shortcut_pending_state_and_tracks_next_edit(self):
+        self.page.controller.record_sequence('pin', 'Ctrl+L')
+        self.assertEqual(self.page.controller.pending_count, 1)
+        self.page.apply_changes()
+        self.assertEqual(self.page.controller.pending_count, 0)
+        self.assertTrue(self.page.rows['pin'].changed_dot.isHidden())
+        self.assertEqual(self.page.messages['pin'].text(), '')
+        self.assertEqual(self.page.footer.change_label.text(), 'Configurações aplicadas')
+        self.assertFalse(self.page.apply_button.isEnabled())
+        self.page.select_section('shortcuts')
+        self.assertNotIn('não salva', self.page.footer.change_label.text())
+        self.page.controller.clear_shortcut('pin')
+        self.assertEqual(self.page.footer.change_label.text(), '1 alteração não salva')
+        self.assertTrue(self.page.apply_button.isEnabled())
 
     def test_reopen_clear_resets_filter_and_selection(self):
         self.window.preferences['reopen'] = 'clear'

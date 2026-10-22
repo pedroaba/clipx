@@ -28,7 +28,10 @@ class PreferencesFooter(QFrame):
     def set_pending(self, count, recording=False):
         self.change_label.setText('Nenhuma alteração' if not count else
             '1 alteração não salva' if count == 1 else f'{count} alterações não salvas')
-        self.apply.setEnabled(count > 0 and not recording)
+        self.buttons.set_apply_enabled(count > 0 and not recording)
+
+    def show_applied(self):
+        self.change_label.setText('Configurações aplicadas')
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

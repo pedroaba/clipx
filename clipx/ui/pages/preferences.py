@@ -224,6 +224,9 @@ class PreferencesDialog(ShortcutsDialog):
         self.window.ui_settings.save(self.ui_draft(), shortcuts=shortcuts)
 
     def apply_changes(self):
+        return self.buttons.run_loading(self._apply_changes)
+
+    def _apply_changes(self):
         self.general_error.hide()
         self.error_label.hide()
         if self.controller.draft() != self.controller.baseline:
@@ -246,12 +249,16 @@ class PreferencesDialog(ShortcutsDialog):
         self.window.apply_preferences(self.ui_draft())
         self.baseline_ui = self.ui_draft()
         self.controller.baseline = self.controller.draft()
+        for name, recorder in self.recorders.items():
+            if recorder.isEnabled():
+                self.controller.set_message(name, '')
         try:
             self.controller.original_global = self.backend.read()
         except (OSError, RuntimeError):
             pass
         self.refresh_appearance()
-        self.update_pending()
+        self.controller.update_draft()
+        self.footer.show_applied()
 
     def refresh_appearance(self, *args):
         apply_surface(self, self.window.preferences, PREFERENCES_QSS)

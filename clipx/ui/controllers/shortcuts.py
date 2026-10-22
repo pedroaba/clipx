@@ -189,6 +189,9 @@ class ShortcutsController(QObject):
             self.set_message("global", "Padrão restaurado · verifique possíveis conflitos ao aplicar.")
 
     def save(self):
+        return self.view.buttons.run_loading(self._save)
+
+    def _save(self):
         self.stop_recording()
         if self.paused_binding is not None:
             return

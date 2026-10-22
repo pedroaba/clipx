@@ -39,10 +39,28 @@ def label_icon(label, name, size=20):
 
 @lru_cache(maxsize=4)
 def _lucide_svg(name):
-    allowed = {'palette', 'panels-top-left', 'app-window', 'keyboard'}
+    allowed = {'palette', 'panels-top-left', 'app-window', 'keyboard', 'loader-circle'}
     if name not in allowed:
         raise ValueError('Ícone Lucide desconhecido: ' + name)
     return (Path(__file__).resolve().parents[2] / 'assets' / 'icons' / 'lucide' / (name + '.svg')).read_text()
+
+
+def loading_icon(size, color, angle):
+    svg = _lucide_svg('loader-circle').replace('currentColor', color)
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.translate(size, size)
+    painter.rotate(angle)
+    painter.translate(-size, -size)
+    QSvgRenderer(QByteArray(svg.encode())).render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    result = QIcon()
+    for mode in (QIcon.Mode.Normal, QIcon.Mode.Disabled):
+        result.addPixmap(pixmap, mode)
+    return result
 
 
 def refresh_lucide_button(button, values):
