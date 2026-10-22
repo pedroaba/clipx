@@ -1,4 +1,12 @@
-"""Background pasteboard observation independent of Qt window activation."""
+"""Background pasteboard observation independent of Qt window activation.
+
+`MacOSClipboardDriver` polls the general `NSPasteboard` change counter and
+forwards new plain text to a capture sink. It ignores pasteboard types that
+applications mark as private, concealed, transient, auto-generated, or
+password-manager content, and it copies text back with the ClipX marker type.
+The blocking observation loop runs its own run loop, so it can execute in a
+worker thread while the Qt user interface keeps running.
+"""
 import sys
 from clipx.processes import module_command
 from clipx.platforms.base import Result, Status
@@ -11,22 +19,64 @@ TEXT_TYPE = 'public.utf8-plain-text'
 
 
 class MacOSClipboardDriver:
+    """Clipboard driver backed by the macOS general pasteboard.
+
+    Attributes:
+        _pasteboard: Injected or lazily resolved `NSPasteboard`.
+        _last_change (int | None): Last observed change count.
+        _stopped: Event whose setting stops `start_observation`, once started.
+    """
+
     def __init__(self, pasteboard=None):
+        """Initialize the driver.
+
+        Args:
+            pasteboard: Pasteboard stand-in for tests. When None, the general
+                pasteboard is resolved on first use.
+        """
         self._pasteboard = pasteboard
         self._last_change = None
         self._stopped = None
 
     @property
     def pasteboard(self):
+        """Return the pasteboard, importing AppKit only when needed.
+
+        Returns:
+            The injected pasteboard or `NSPasteboard.generalPasteboard()`.
+        """
         if self._pasteboard is None:
             from AppKit import NSPasteboard
             self._pasteboard = NSPasteboard.generalPasteboard()
         return self._pasteboard
 
     def listener_command(self, database):
+        """Build the command that runs the clipboard watcher subprocess.
+
+        Args:
+            database (Path): History database passed to the watcher.
+
+        Returns:
+            list[str]: Module invocation of ``clipx.capture`` with
+            ``--watch-macos``.
+        """
         return module_command('clipx.capture', database, '--watch-macos')
 
     def poll(self, capture):
+        """Check the pasteboard for a new text value and capture it once.
+
+        Private or empty type sets are acknowledged and reset the capture sink.
+        A change to the change count during the read is retried later instead of
+        persisting an inconsistent value. Missing text when the UTF-8 type is
+        present is reported as a permission problem.
+
+        Args:
+            capture: Capture sink providing ``reset()`` and ``save(text)``.
+
+        Returns:
+            Result | None: A status when new content was observed, or None when
+            the change count is unchanged or the read raced another change.
+        """
         board = self.pasteboard
         count = board.changeCount()
         if count == self._last_change:
@@ -49,6 +99,19 @@ class MacOSClipboardDriver:
         return Result()
 
     def write_text(self, text):
+        """Replace the pasteboard contents with plain text.
+
+        Clears the pasteboard, writes the UTF-8 text, and adds `SELF_TYPE` so
+        ClipX can recognize its own copy. Native exceptions become error
+        results rather than propagating.
+
+        Args:
+            text (str): Text to copy.
+
+        Returns:
+            Result: `Status.READY` on success, otherwise `Status.ERROR` with a
+            message.
+        """
         try:
             board = self.pasteboard
             board.clearContents()
@@ -60,6 +123,18 @@ class MacOSClipboardDriver:
             return Result(Status.ERROR, f'Não foi possível copiar: {exc}')
 
     def start_observation(self, capture, stopped, report):
+        """Poll the pasteboard until `stopped` is set.
+
+        Each iteration runs inside an autorelease pool, pumps the current run
+        loop for 10 ms, then waits up to 240 ms on the stop event. Statuses are
+        reported only when they change. Observation failures are reported as
+        `Status.UNAVAILABLE` and do not end the loop.
+
+        Args:
+            capture: Capture sink providing ``reset()`` and ``save(text)``.
+            stopped: Threading event; setting it ends the loop.
+            report (Callable[[Result], None]): Receives status changes.
+        """
         import objc
         from Foundation import NSRunLoop, NSDate
         self._stopped = stopped
@@ -80,5 +155,6 @@ class MacOSClipboardDriver:
             stopped.wait(0.24)
 
     def stop_observation(self):
+        """Set the stop event captured by `start_observation`, if any."""
         if self._stopped is not None:
             self._stopped.set()

@@ -1,4 +1,9 @@
-"""Tray lifecycle and navigation; menu composition lives in the organism layer."""
+"""Tray lifecycle and navigation; menu composition lives in the organism layer.
+
+The controller connects tray actions to the search window, the clipboard
+service and platform desktop integration, refreshes the recent-clip entries and
+surfaces operation results as native notifications.
+"""
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 from PyQt6.QtCore import QTimer
 from clipx.ui.foundations.icons import icon
@@ -7,13 +12,37 @@ from clipx.ui.organisms.tray_menu import TrayMenu
 
 
 def tray_icon():
+    """Build the monochrome mask icon used by the system tray.
+
+    Returns:
+        QIcon: Clipboard icon rendered at 24 px and marked as a mask.
+    """
     result = icon('clipboard', 24, '#E4E4E7')
     result.setIsMask(True)
     return result
 
 
 class ClipXTray(QSystemTrayIcon):
+    """System tray icon that owns the tray menu and its navigation.
+
+    Attributes:
+        storage (Storage): Provider of the recent clips shown in the menu.
+        window (ClipXMainWindow): Search window opened by the tray actions.
+        platform (object): Platform driver bundle for desktop integration.
+        menu (TrayMenu): Context menu with search, clips and settings actions.
+        shortcuts_dialog (PreferencesDialog | None): Open preferences dialog,
+            reused while visible.
+        refresh_timer (QTimer): Refreshes the recent clips every second.
+    """
+
     def __init__(self, storage, window, parent=None):
+        """Create the tray icon, wire its actions and start periodic refresh.
+
+        Args:
+            storage (Storage): Provider of the recent clips.
+            window (ClipXMainWindow): Window receiving navigation requests.
+            parent (QObject | None): Optional parent object.
+        """
         super().__init__(tray_icon(), parent)
         self.storage = storage
         self.window = window
@@ -54,21 +83,32 @@ class ClipXTray(QSystemTrayIcon):
         self.window.operation_result.connect(self.show_result)
 
     def show(self):
+        """Install the macOS menu tracking guard, then show the tray icon."""
         if self.platform.name == 'macos' and QApplication.platformName() == 'cocoa':
             from clipx.platforms.macos.tray import install_menu_tracking_guard
             install_menu_tracking_guard()
         super().show()
 
     def _about_to_show(self):
+        """Refresh the recent clips and capture status before the menu opens."""
         self.refresh_menu()
         self.capture_action.setText('Captura ativa' if self._capture_status.ok else 'Captura indisponível')
         self.capture_action.setToolTip(self._capture_status.message)
         self._menu_open = True
 
     def _about_to_hide(self):
+        """Mark the menu as closed so refreshes resume."""
         self._menu_open = False
 
     def set_capture_status(self, result):
+        """Store and display the clipboard capture status.
+
+        The menu action is updated immediately unless the menu is open, in
+        which case the change is deferred to the next show.
+
+        Args:
+            result (Result): Capture status with ``ok`` and ``message``.
+        """
         self._capture_status = result
         self.window.set_capture_status(result)
         if not self._menu_open:
@@ -76,16 +116,33 @@ class ClipXTray(QSystemTrayIcon):
             self.capture_action.setToolTip(result.message)
 
     def show_result(self, result):
+        """Show an operation result as a tray notification when appropriate.
+
+        Notifications are skipped when the window is visible or when the
+        platform runs the offscreen/minimal Qt backends.
+
+        Args:
+            result (Result): Operation result carrying the message to display.
+        """
         if result.message and not self.window.isVisible() and QApplication.platformName() not in ('offscreen', 'minimal'):
             self.showMessage('ClipX', result.message, QSystemTrayIcon.MessageIcon.Information, 8000)
 
     def request_paste_permission(self):
+        """Ask the platform for paste permission and surface the result."""
         self.window.show_result(self.platform.desktop.request_paste_permission())
 
     def open_shortcuts(self):
+        """Open the preferences dialog on the shortcuts section."""
         self.open_preferences('shortcuts')
 
     def open_preferences(self, section='appearance'):
+        """Open the preferences dialog, hiding the menu and the search window.
+
+        The dialog is created once and reused while it stays alive.
+
+        Args:
+            section (str): Section to select in the dialog.
+        """
         from clipx.ui.pages.preferences import PreferencesDialog
         self.menu.hide()
         self.window.hide()
@@ -96,10 +153,24 @@ class ClipXTray(QSystemTrayIcon):
         self._bring_to_front(self.shortcuts_dialog)
 
     def _shortcuts_closed(self, result):
+        """Release the preferences dialog after it closes.
+
+        Args:
+            result (int): Dialog result code; unused by the controller.
+        """
         self.shortcuts_dialog.deleteLater()
         self.shortcuts_dialog = None
 
     def open_search(self, activation_token=''):
+        """Open the search window, or focus the preferences dialog if visible.
+
+        Remembers the previously focused application, restores the window when
+        hidden, reloads clips and focuses the search field.
+
+        Args:
+            activation_token (str): Platform token used when bringing the
+                window to the front.
+        """
         if self.shortcuts_dialog is not None and self.shortcuts_dialog.isVisible():
             self._bring_to_front(self.shortcuts_dialog, activation_token)
             return
@@ -111,15 +182,34 @@ class ClipXTray(QSystemTrayIcon):
         self.window.search_bar.focus_input()
 
     def _bring_to_front(self, window, activation_token=''):
+        """Delegate bringing a window to the front to the platform driver.
+
+        Args:
+            window (QWidget): Window to raise and activate.
+            activation_token (str): Platform token identifying the activation.
+        """
         self.platform.desktop.open_search(window, activation_token)
 
     def _on_activated(self, reason):
+        """Open the search window when the tray icon is triggered.
+
+        On macOS, activations caused by opening the context menu are ignored so
+        the search window does not appear as well.
+
+        Args:
+            reason (QSystemTrayIcon.ActivationReason): Activation that occurred.
+        """
         if self.platform.name == 'macos' and self.contextMenu() is not None:
             return  # Opening the menu must not also activate the search window.
         if reason in (self.ActivationReason.Trigger, self.ActivationReason.DoubleClick):
             self.open_search()
 
     def refresh_menu(self):
+        """Refresh the recent-clip actions, skipping work while the menu is open.
+
+        The menu is only rewritten when the recent clips changed, and ampersands
+        are escaped so clip text is not interpreted as mnemonics.
+        """
         if self._menu_open:
             return
         clips = self.storage.get_clips(limit=5, pinned_first=False)
@@ -142,6 +232,13 @@ class ClipXTray(QSystemTrayIcon):
             action.setVisible(True)
 
     def copy_clip(self, clip):
+        """Copy a clip through the clipboard service and report the result.
+
+        The menu is refreshed after a successful copy.
+
+        Args:
+            clip (object | None): Clip to copy; ``None`` is ignored.
+        """
         if clip is None:
             return
         result = self.window.clipboard_service.copy(clip)

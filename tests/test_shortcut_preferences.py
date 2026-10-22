@@ -16,12 +16,16 @@ from clipx.ui.pages.shortcuts import ShortcutsDialog
 
 
 class ShortcutPreferencesTests(unittest.TestCase):
+    """Exercise the shortcut preferences dialog without a native desktop."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        """Build an isolated window, backend mock and shortcuts dialog."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         folder = Path(self.temp.name)
@@ -41,6 +45,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.addCleanup(self.page.close)
 
     def test_sidebar_counts_real_actions_and_filters_without_recreating_editors(self):
+        """Sidebar counts include real actions and filtering reuses the same editor widgets."""
         self.assertEqual(self.page.sidebar.counts['all'], len(SHORTCUTS) + 1)
         recorder = self.page.editors['pin']
         self.page.sidebar.buttons['system'].click()
@@ -51,6 +56,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.assertIs(self.page.editors['pin'], recorder)
 
     def test_search_matches_titles_and_keystrokes_and_has_empty_state(self):
+        """Search matches titles and keystrokes, shows an empty state and resets on clear."""
         self.page.search_field.input.setText('fixar')
         self.assertEqual(self.page.sections.visible_names(), ['pin'])
         self.page.search_field.input.setText('Ctrl+P')
@@ -62,6 +68,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.assertEqual(len(self.page.sections.visible_names()), len(SHORTCUTS) + 1)
 
     def test_dirty_count_tracks_draft_revert_and_cancel_does_not_persist(self):
+        """The dirty count follows edits and reverts, and cancelling persists nothing."""
         self.assertEqual(self.page.controller.pending_count, 0)
         self.assertFalse(self.page.apply_button.isEnabled())
         self.page.editors['pin'].setKeySequence(QKeySequence('Ctrl+L'))
@@ -76,6 +83,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.backend.write.assert_not_called()
 
     def test_switching_category_ends_recording_and_restores_global_binding(self):
+        """Leaving the category stops recording and resumes the paused global binding."""
         self.page.show()
         self.app.processEvents()
         self.page.controller.start_recording('global')
@@ -85,6 +93,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.backend.resume.assert_called_once_with('<Super>v')
 
     def test_apply_saves_hidden_draft_from_another_category(self):
+        """Applying saves edits made in a category that is no longer visible."""
         self.page.editors['pin'].setKeySequence(QKeySequence('Ctrl+L'))
         self.page.sidebar.buttons['system'].click()
         self.page.apply_button.click()
@@ -92,12 +101,14 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.shortcuts['pin'], 'Ctrl+L')
 
     def test_recorder_exposes_keycaps_without_changing_serialization(self):
+        """The recorder renders keycaps while keeping the serialized sequence unchanged."""
         recorder = self.page.editors['pin']
         self.assertEqual(recorder.keySequence().toString(), 'Ctrl+P')
         self.assertEqual(len(recorder.keycaps.caps), 2)
         self.assertEqual(recorder.keycaps.caps[-1].text(), 'P')
 
     def test_find_shortcut_focuses_search_and_does_not_steal_recorded_combination(self):
+        """The find shortcut focuses search, but recording captures the same chord instead."""
         from PyQt6.QtCore import Qt
         from PyQt6.QtTest import QTest
         self.page.show()
@@ -111,6 +122,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.assertFalse(self.page.editors['pin'].recording)
 
     def test_restore_defaults_only_changes_draft(self):
+        """Restoring defaults resets the draft without persisting or writing the backend."""
         self.page.editors['pin'].clear()
         self.assertEqual(self.page.controller.pending_count, 1)
         self.page.footer.reset.click()
@@ -120,6 +132,7 @@ class ShortcutPreferencesTests(unittest.TestCase):
         self.backend.write.assert_not_called()
 
     def test_preferences_and_picker_use_system_window_controls(self):
+        """Preferences and the picker are non-modal system-chrome windows that close cleanly."""
         from PyQt6.QtCore import Qt
         from clipx.ui.pages.shortcut_picker import ShortcutPicker
         self.assertFalse(self.page.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)

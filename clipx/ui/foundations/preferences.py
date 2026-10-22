@@ -1,4 +1,9 @@
-"""Preference components derive from the same semantic palette as search."""
+"""Preference components derive from the same semantic palette as search.
+
+Extends the shared style sheet with dialog, sidebar, shortcut-row and footer
+styles so preferences inherit the same colors, radii and focus treatment as the
+clipboard overlay.
+"""
 from clipx.ui.foundations.theme import QSS_STYLESHEET, BG_WINDOW, BG_CARD, BORDER_DEFAULT, TEXT_SECONDARY
 
 PREFERENCES_QSS = QSS_STYLESHEET + f'''

@@ -13,11 +13,30 @@ _replacement = None
 
 
 def _menu_began_tracking(delegate, notification):
+    """Ignore the menu-tracking notification without inspecting the event.
+
+    Args:
+        delegate: Qt status-item delegate receiving the callback.
+        notification: Tracking notification; intentionally unused.
+
+    Returns:
+        None: The callback performs no work and produces no return value.
+    """
     # A tracking notification is not a mouse event. Never inspect its clickCount.
     return None
 
 
 def install_menu_tracking_guard():
+    """Replace Qt's unsafe tracking callback once per process.
+
+    Adds a ``statusItemMenuBeganTracking:`` method to the Objective-C
+    `QStatusItemDelegate` class, overriding the implementation that reads
+    ``clickCount``. Subsequent calls are no-ops.
+
+    Raises:
+        RuntimeError: If the loaded Qt version does not expose the expected
+            delegate callback.
+    """
     global _installed, _replacement
     if _installed:
         return

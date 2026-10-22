@@ -1,4 +1,10 @@
-"""Single frozen entrypoint, including the background capture subprocess."""
+"""Single frozen entrypoint, including the background capture subprocess.
+
+Dispatches on the first command-line argument: ``_capture`` starts the clipboard
+capture subprocess, ``_self-test`` runs the bundle self-check, and any other
+invocation starts the main application. The selected module's ``main`` result
+becomes the process exit status.
+"""
 import multiprocessing
 import sys
 

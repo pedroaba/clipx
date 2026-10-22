@@ -5,7 +5,22 @@ from clipx.ui.foundations.icons import icon
 
 
 class NavigationItem(QPushButton):
+    """Checkable sidebar button with an icon, title, and shortcut counter.
+
+    Child labels are transparent to mouse events so the button receives all
+    clicks. The accessible name combines the visible title and count.
+    """
+
     def __init__(self, label, glyph, count, parent=None):
+        """Create a navigation item and render its initial state.
+
+        Args:
+            label (str): Visible title used in the accessible name.
+            glyph (str): Icon identifier resolved by the foundations icon
+                helper.
+            count (int): Number of shortcuts shown in the counter.
+            parent (QWidget, optional): Parent widget that owns the item.
+        """
         super().__init__(parent)
         self.setObjectName('NavigationItem')
         self.setCheckable(True)
@@ -31,6 +46,11 @@ class NavigationItem(QPushButton):
         self.refresh_state(False)
 
     def refresh_state(self, checked):
+        """Apply the active property and icon color for the checked state.
+
+        Args:
+            checked (bool): Whether the navigation item is selected.
+        """
         for widget in (self.title, self.counter):
             widget.setProperty('active', checked)
             widget.style().unpolish(widget)

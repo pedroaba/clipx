@@ -1,4 +1,11 @@
-"""macOS hotkeys: Carbon registers one combination, without a keyboard tap."""
+"""macOS hotkeys: Carbon registers one combination, without a keyboard tap.
+
+`CarbonHotKeys` wraps the Carbon event manager through `ctypes`: it installs a
+single application event handler, maps Qt key sequences to Carbon virtual key
+codes and modifier masks, and registers or unregisters individual hotkeys.
+`MacOSGlobalShortcut` is the Qt-facing driver that persists the chosen sequence
+in ``settings.json`` and re-emits activations as a queued Qt signal.
+"""
 import ctypes as C
 import json
 from pathlib import Path
@@ -11,14 +18,42 @@ from clipx.shortcuts import normalize
 
 
 class EventType(C.Structure):
+    """Carbon event type used to install the hotkey handler.
+
+    Attributes:
+        eventClass (int): Four-character event class, for example ``'keyb'``.
+        eventKind (int): Numeric event kind within the class; ``6`` selects
+            hotkey-pressed events.
+    """
+
     _fields_ = [('eventClass', C.c_uint32), ('eventKind', C.c_uint32)]
 
 
 class HotKeyID(C.Structure):
+    """Carbon hotkey identity passed to register and received in events.
+
+    Attributes:
+        signature (int): Four-character creator code; ClipX uses ``'CLPX'``.
+        id (int): Per-process hotkey number assigned at registration.
+    """
+
     _fields_ = [('signature', C.c_uint32), ('id', C.c_uint32)]
 
 
 class CarbonHotKeys:
+    """Thin Carbon wrapper registering hotkeys on the application event target.
+
+    Attributes:
+        SIGNATURE (int): Packed ``'CLPX'`` creator code for ClipX hotkeys.
+        KEYS (dict[str, int]): Mapping from Qt portable key names to Carbon
+            virtual key codes.
+        lib (ctypes.CDLL): Loaded Carbon framework with configured signatures.
+        callbacks (dict[int, Callable[[], None]]): Hotkey callback per ID.
+        next_id (int): Counter for the next hotkey ID.
+        handler_ref (ctypes.c_void_p): Installed event handler reference.
+        handler: C callback trampoline forwarding events to `_receive`.
+    """
+
     SIGNATURE = int.from_bytes(b'CLPX', 'big')
     KEYS = {'A': 0, 'S': 1, 'D': 2, 'F': 3, 'H': 4, 'G': 5, 'Z': 6, 'X': 7,
             'C': 8, 'V': 9, 'B': 11, 'Q': 12, 'W': 13, 'E': 14, 'R': 15,
@@ -33,6 +68,15 @@ class CarbonHotKeys:
                  'F7': 98, 'F8': 100, 'F9': 101, 'F10': 109, 'F11': 103, 'F12': 111})
 
     def __init__(self):
+        """Load Carbon, configure `ctypes` prototypes, and install the handler.
+
+        The handler is installed once for ``keyb``/``6`` (hotkey pressed) on
+        the application event target.
+
+        Raises:
+            RuntimeError: If Carbon cannot install the event handler; the
+                error includes the OSStatus code.
+        """
         self.lib = C.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
         self.lib.RegisterEventHotKey.argtypes = [C.c_uint32, C.c_uint32, HotKeyID, C.c_void_p,
                                                   C.c_uint32, C.POINTER(C.c_void_p)]
@@ -58,6 +102,17 @@ class CarbonHotKeys:
             raise RuntimeError(f'Não foi possível preparar o atalho global ({status}).')
 
     def _receive(self, handler, event, data):
+        """Dispatch a Carbon event to the callback registered for its hotkey.
+
+        Args:
+            handler: C function pointer installed for the event.
+            event (ctypes.c_void_p): Carbon event reference.
+            data: User data passed at installation; unused.
+
+        Returns:
+            int: ``0`` when a matching ClipX hotkey callback ran, otherwise
+            ``-9874`` (``eventNotHandledErr``) so Carbon keeps processing.
+        """
         identity = HotKeyID()
         status = self.lib.GetEventParameter(event, int.from_bytes(b'----', 'big'),
                     int.from_bytes(b'hkid', 'big'), None, C.sizeof(identity), None, C.byref(identity))
@@ -69,6 +124,24 @@ class CarbonHotKeys:
         return -9874  # eventNotHandledErr
 
     def combination(self, sequence):
+        """Translate a Qt shortcut sequence into Carbon key and modifier codes.
+
+        Only the first key of the sequence is used. Qt swaps Control and Meta on
+        macOS, so portable Ctrl becomes native Command (``1 << 8``), Meta
+        becomes Control (``1 << 12``), Alt becomes Option (``1 << 11``), and
+        Shift is ``1 << 9``. At least one of Command, Control, or Option is
+        required.
+
+        Args:
+            sequence (str): Shortcut in Qt portable notation.
+
+        Returns:
+            tuple[int, int]: Carbon virtual key code and modifier mask.
+
+        Raises:
+            ValueError: If the key has no Carbon mapping or the sequence lacks
+                Command, Control, and Option.
+        """
         combo = QKeySequence(normalize(sequence))[0]
         key = QKeySequence(combo.key().value).toString(QKeySequence.SequenceFormat.PortableText)
         code = self.KEYS.get(key)
@@ -87,6 +160,22 @@ class CarbonHotKeys:
         return code, modifiers
 
     def register(self, sequence, callback):
+        """Validate and register one hotkey on the application event target.
+
+        Args:
+            sequence (str): Shortcut in Qt portable notation.
+            callback (Callable[[], None]): Invoked on the Carbon event thread
+                when the hotkey fires.
+
+        Returns:
+            tuple[ctypes.c_void_p, int]: Unregister handle and assigned hotkey
+            ID.
+
+        Raises:
+            ValueError: If `combination` rejects the sequence.
+            RuntimeError: If Carbon refuses the registration, usually because
+                another application owns the combination.
+        """
         code, modifiers = self.combination(sequence)
         self.next_id += 1
         identity = HotKeyID(self.SIGNATURE, self.next_id)
@@ -99,17 +188,41 @@ class CarbonHotKeys:
         return (reference, self.next_id)
 
     def unregister(self, handle):
+        """Release a registered hotkey and forget its callback.
+
+        Args:
+            handle (tuple[ctypes.c_void_p, int]): Value returned by `register`.
+        """
         reference, identity = handle
         self.lib.UnregisterEventHotKey(reference)
         self.callbacks.pop(identity, None)
 
     def close(self):
+        """Remove the installed Carbon event handler, if any."""
         if self.handler_ref:
             self.lib.RemoveEventHandler(self.handler_ref)
             self.handler_ref = C.c_void_p()
 
 
 class MacOSGlobalShortcut(QObject):
+    """Qt-facing global shortcut driver backed by Carbon.
+
+    Attributes:
+        activated (pyqtSignal): Emitted when the registered combination fires.
+        default_sequence (str): Fallback shortcut, ``'Ctrl+Shift+V'``, the Qt
+            portable representation of Command-Shift-V.
+        portable_bindings (bool): True because stored bindings use Qt portable
+            notation.
+        modifier_hint (str): User-facing hint naming the allowed modifiers.
+        path (pathlib.Path): JSON settings file that stores the shortcut.
+        native (CarbonHotKeys | None): Carbon wrapper, created on `start`.
+        handle (tuple | None): Current Carbon registration handle.
+        callback (Callable[[], None] | None): Receiver connected to
+            `activated`.
+        paused (bool): True while the shortcut is released for recording.
+        _value (str): Current normalized sequence; empty disables the hotkey.
+    """
+
     activated = pyqtSignal()
     default_sequence = 'Ctrl+Shift+V'  # Qt portable representation of ⌘⇧V.
     portable_bindings = True
@@ -117,6 +230,20 @@ class MacOSGlobalShortcut(QObject):
 
     @staticmethod
     def to_binding(sequence):
+        """Validate and normalize a shortcut for storage.
+
+        Validation uses only the Qt-to-Carbon key mapping; no Carbon library or
+        registration is involved.
+
+        Args:
+            sequence (str): Shortcut in Qt portable notation.
+
+        Returns:
+            str: Normalized sequence, or an empty string when unset.
+
+        Raises:
+            ValueError: If the key or modifiers are not supported on macOS.
+        """
         if not sequence:
             return ''
         CarbonHotKeys.combination(CarbonHotKeys.__new__(CarbonHotKeys), sequence)
@@ -124,10 +251,29 @@ class MacOSGlobalShortcut(QObject):
 
     @staticmethod
     def from_binding(binding):
+        """Normalize a stored binding.
+
+        Args:
+            binding (str): Stored platform binding.
+
+        Returns:
+            str: Normalized sequence, or an empty string when unset.
+        """
         return normalize(binding) if binding else ''
 
 
     def __init__(self, path=None, native=None):
+        """Load the stored shortcut and initialize driver state.
+
+        Missing, unreadable, or malformed settings are ignored, leaving the
+        default sequence in place. The Carbon wrapper is not created here.
+
+        Args:
+            path (str | Path | None): Settings file to read; defaults to
+                ``settings.json`` in the macOS configuration directory.
+            native (CarbonHotKeys | None): Pre-built Carbon wrapper, mainly for
+                tests.
+        """
         super().__init__()
         from clipx.platforms.paths import PlatformPaths
         self.path = Path(path) if path else PlatformPaths('darwin').config / 'settings.json'
@@ -144,9 +290,29 @@ class MacOSGlobalShortcut(QObject):
             pass
 
     def read(self):
+        """Return the current shortcut sequence.
+
+        Returns:
+            str: Normalized sequence, or an empty string when disabled.
+        """
         return self._value
 
     def start(self, callback):
+        """Create the Carbon wrapper if needed and register the stored hotkey.
+
+        Returns immediately if already started. The callback is always
+        connected to `activated` through a queued connection, so it runs on the
+        receiver's Qt thread. Registration failures propagate so Preferences can
+        ask for a different combination; in that case no hotkey is active but
+        `stop` can still release the Carbon handler.
+
+        Args:
+            callback (Callable[[], None]): Invoked when the shortcut fires.
+
+        Raises:
+            RuntimeError: If the Carbon event handler cannot be installed.
+            ValueError: If the stored sequence is not supported.
+        """
         if self.callback is not None:
             return
         if self.native is None:
@@ -162,6 +328,16 @@ class MacOSGlobalShortcut(QObject):
             raise
 
     def _persist(self, sequence):
+        """Atomically write the shortcut into the settings JSON file.
+
+        Preserves other keys, creates the parent directory, writes through a
+        temporary file in the same directory, and replaces the destination with
+        `os.replace`. The temporary file is always removed.
+
+        Args:
+            sequence (str): Normalized sequence; an empty string disables the
+                hotkey on the next start.
+        """
         data = {}
         try:
             data = json.loads(self.path.read_text())
@@ -181,6 +357,22 @@ class MacOSGlobalShortcut(QObject):
             Path(name).unlink(missing_ok=True)
 
     def write(self, sequence):
+        """Persist and activate a new shortcut, replacing the current one.
+
+        No-op when the normalized value is unchanged. The new combination is
+        registered before the old one is released, so a failed registration
+        leaves the previous hotkey untouched. If persisting fails, the new
+        registration is rolled back.
+
+        Args:
+            sequence (str): Shortcut in Qt portable notation; empty disables it.
+
+        Raises:
+            RuntimeError: If recording is paused or the driver was never
+                started.
+            ValueError: If the sequence is not supported on macOS.
+            RuntimeError: If Carbon refuses the new combination.
+        """
         value = normalize(sequence) if sequence else ''
         if value == self._value:
             return
@@ -202,10 +394,26 @@ class MacOSGlobalShortcut(QObject):
         self._value = value
 
     def conflicts(self, sequence):
+        """Report conflicting shortcuts.
+
+        Carbon only reveals conflicts at registration time and macOS exposes no
+        inventory comparable to GNOME's, so this is always empty.
+
+        Args:
+            sequence (str): Candidate shortcut; unused.
+
+        Returns:
+            list: Always an empty list.
+        """
         # Carbon is authoritative at registration; macOS exposes no GNOME-style inventory.
         return []
 
     def pause(self):
+        """Unregister the current hotkey while a new one is recorded.
+
+        Returns:
+            str: The sequence that was active before pausing.
+        """
         value = self._value
         if self.handle is not None:
             self.native.unregister(self.handle)
@@ -214,14 +422,28 @@ class MacOSGlobalShortcut(QObject):
         return value
 
     def resume(self, sequence):
+        """Re-register the stored hotkey after recording.
+
+        Only registers when the driver was paused, has a callback, and has a
+        non-empty stored sequence; the stored value is used rather than
+        ``sequence``.
+
+        Args:
+            sequence (str): Sequence proposed by the caller; unused.
+        """
         if self.paused and self.callback is not None and self._value:
             self.handle = self.native.register(self._value, self.activated.emit)
         self.paused = False
 
     def recover(self):
+        """Do nothing; Carbon releases process-owned registrations on exit."""
         pass  # Carbon registrations are process-owned and released by the OS on exit.
 
     def stop(self):
+        """Unregister the hotkey, disconnect the callback, and close Carbon.
+
+        Safe to call repeatedly and after a failed `start`. Resets ``paused``.
+        """
         if self.handle is not None:
             self.native.unregister(self.handle)
             self.handle = None

@@ -5,7 +5,22 @@ from clipx.ui.molecules.shortcut_recorder import ShortcutRecorder
 
 
 class ShortcutRow(QFrame):
+    """Shortcut preference row with title, description, and editing controls.
+
+    The row combines a clear button, a :class:`ShortcutRecorder`, an optional
+    chooser for the global shortcut, a modified marker, and inline feedback.
+    """
+
     def __init__(self, spec, sequence, parent=None):
+        """Build the row from a shortcut specification and current sequence.
+
+        Args:
+            spec (ShortcutSpec): Action metadata exposing ``title``,
+                ``description``, and ``name``. A ``name`` of ``'global'`` adds
+                the chooser button.
+            sequence (str): Current key sequence shown in the recorder.
+            parent (QWidget, optional): Parent widget that owns the row.
+        """
         super().__init__(parent)
         self.spec = spec
         self.setObjectName('ShortcutRow')
@@ -59,5 +74,10 @@ class ShortcutRow(QFrame):
         self.box.addWidget(self.message)
 
     def set_modified(self, modified):
+        """Mark the row as having unsaved changes and show the indicator dot.
+
+        Args:
+            modified (bool): Whether the draft differs from persisted settings.
+        """
         self.setProperty('modified', modified)
         self.changed_dot.setVisible(modified)

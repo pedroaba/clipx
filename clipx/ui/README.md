@@ -13,6 +13,13 @@ A interface usa PyQt6 nas duas plataformas. Atomic Design organiza a composiçã
 | `controllers/` | Coordenação de interações e integração com a aplicação | Gravação/aplicação de atalhos e controle da bandeja |
 | `models/` | Metadados de apresentação sem dependência de widgets | Catálogo, descrições e categorias dos atalhos |
 
+## Docstrings
+
+Todos os módulos, classes, funções e métodos da interface seguem o
+[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings),
+com docstrings em inglês. Documente o comportamento real do componente,
+incluindo sinais Qt, foco, ciclo de vida e efeitos colaterais.
+
 ## Dependências e limites
 
 - Componentes básicos não importam páginas, controladores ou drivers nativos. Use sinais Qt para comunicar intenção.

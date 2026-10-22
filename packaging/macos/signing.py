@@ -1,4 +1,11 @@
-"""Import a release certificate into an ephemeral CI keychain, or remove it."""
+"""Import a release certificate into an ephemeral CI keychain, or remove it.
+
+Reads the base64-encoded ``MACOS_CERTIFICATE_P12`` and its
+``MACOS_CERTIFICATE_PASSWORD`` from the environment and installs the certificate
+in a temporary keychain under ``RUNNER_TEMP``. Invoking the script with
+``cleanup`` deletes that keychain instead. Without a certificate the script
+reports that ad-hoc signing is in use, unless a signing identity is also set.
+"""
 import base64
 import os
 from pathlib import Path
@@ -9,10 +16,36 @@ import sys
 
 
 def command(*arguments, capture=False):
+    """Run a macOS ``security`` command.
+
+    Args:
+        *arguments (str): Command and arguments; the first item is the executable.
+        capture (bool): Whether to capture stdout and stderr as text. Defaults to False.
+
+    Returns:
+        subprocess.CompletedProcess: The finished process.
+
+    Raises:
+        subprocess.CalledProcessError: If the command exits with a non-zero status.
+    """
     return subprocess.run(arguments, check=True, text=True, capture_output=capture)
 
 
 def main():
+    """Create or delete the ephemeral signing keychain for the current CI run.
+
+    With ``cleanup`` as the only argument, deletes the keychain if it exists. With
+    ``MACOS_CERTIFICATE_P12`` set, decodes the archive into ``RUNNER_TEMP``,
+    creates and unlocks a temporary keychain, imports the certificate and makes it
+    available to ``codesign``. The temporary archive is always removed afterwards.
+
+    Raises:
+        KeyError: If ``RUNNER_TEMP`` is not set.
+        RuntimeError: If an identity is set without a certificate, or if the
+            certificate is present without ``MACOS_SIGNING_IDENTITY`` and
+            ``MACOS_CERTIFICATE_PASSWORD``.
+        subprocess.CalledProcessError: If a ``security`` command fails.
+    """
     temporary = Path(os.environ['RUNNER_TEMP'])
     keychain = temporary / 'clipx-signing.keychain-db'
     if sys.argv[1:] == ['cleanup']:

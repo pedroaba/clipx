@@ -1,4 +1,11 @@
-"""Native background siblings behind the Qt view; foreground remains PyQt6."""
+"""Native background siblings behind the Qt view; foreground remains PyQt6.
+
+`MacOSWindowEffects` inserts an `NSVisualEffectView` (or `NSGlassEffectView`
+when the OS provides it) as a sibling behind Qt's view, so AppKit draws the
+material while PyQt6 keeps painting and handling input. The material is
+refreshed when accessibility display options change, and removed when the user
+enables Reduce Transparency.
+"""
 import logging
 from clipx.platforms.effects import OpaqueWindowEffects
 
@@ -6,7 +13,19 @@ _EFFECT_CLASSES = {}
 
 
 def _effect_class(glass):
-    """Native materials must never consume clicks intended for Qt."""
+    """Create or return the Objective-C subclass used for the material view.
+
+    The generated class overrides ``hitTest_`` to return ``None`` so the native
+    view never consumes clicks intended for Qt. Subclasses are cached by the
+    ``glass`` flag.
+
+    Args:
+        glass (bool): Use `NSGlassEffectView` when available; otherwise use
+            `NSVisualEffectView`.
+
+    Returns:
+        type: The cached Objective-C class for the requested material.
+    """
     if glass not in _EFFECT_CLASSES:
         import objc
         import AppKit
@@ -17,11 +36,26 @@ def _effect_class(glass):
 
 
 class MacOSWindowEffects(OpaqueWindowEffects):
+    """Apply native macOS materials behind Qt windows.
+
+    Attributes:
+        views (dict[int, object]): Material view per ``id(window)``.
+        observers (dict[int, tuple]): Notification center, token, and callback
+            registered per ``id(window)``.
+    """
+
     def __init__(self):
+        """Initialize empty view and observer registries."""
         self.views = {}
         self.observers = {}
 
     def reduce_motion(self):
+        """Return the system Reduce Motion preference.
+
+        Returns:
+            bool: True when AppKit reports reduced motion, and also True if the
+            preference cannot be read.
+        """
         try:
             import AppKit
             return bool(AppKit.NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
@@ -29,6 +63,15 @@ class MacOSWindowEffects(OpaqueWindowEffects):
             return True
 
     def _watch_preferences(self, window):
+        """Subscribe the window to accessibility display-option changes.
+
+        Registers at most one observer per window on the workspace notification
+        center. The callback calls ``window.refresh_material()`` on the main
+        operation queue.
+
+        Args:
+            window: Qt window to refresh; identified by ``id(window)``.
+        """
         if id(window) in self.observers:
             return
         import AppKit
@@ -41,12 +84,34 @@ class MacOSWindowEffects(OpaqueWindowEffects):
         self.observers[id(window)] = (center, token, callback)
 
     def _remove_view(self, window):
+        """Detach the material view from the window, if present.
+
+        Args:
+            window: Qt window whose view is removed; the ``nativeGlass``
+            property is reset to False.
+        """
         effect = self.views.pop(id(window), None)
         if effect is not None:
             effect.removeFromSuperview()
         window.setProperty('nativeGlass', False)
 
     def apply(self, window):
+        """Insert or update the native material behind a window.
+
+        Returns the opaque fallback under the ``offscreen`` and ``minimal`` Qt
+        platforms. Native work is skipped when Reduce Transparency is enabled,
+        reusing an existing view for appearance-only updates. Glass is used when
+        available and vibrancy otherwise, both with a 16-point corner radius,
+        the window's light or dark appearance, and a non-opaque native window
+        background. Native errors are logged, the view is removed, and False is
+        returned.
+
+        Args:
+            window: Qt window to decorate.
+
+        Returns:
+            bool: True when a native material is active, otherwise False.
+        """
         from PyQt6.QtWidgets import QApplication
         if QApplication.platformName() in ('offscreen', 'minimal'):
             return super().apply(window)
@@ -98,6 +163,11 @@ class MacOSWindowEffects(OpaqueWindowEffects):
             return False
 
     def remove(self, window):
+        """Remove the material view, preference observer, and glass flag.
+
+        Args:
+            window: Qt window to restore.
+        """
         self._remove_view(window)
         observed = self.observers.pop(id(window), None)
         if observed is not None:

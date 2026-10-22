@@ -1,4 +1,10 @@
-"""Semantic appearance resolution for all shared Qt surfaces."""
+"""Semantic appearance resolution for all shared Qt surfaces.
+
+Maps the light and dark palettes, rewrites dark theme literals into light
+equivalents, scales style-sheet metrics, and re-renders icons and palettes for a
+widget tree. Appearance values are dictionaries containing at least ``theme``
+(``dark``, ``light`` or ``system``) and ``scale`` (a percentage).
+"""
 import re
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPalette
@@ -38,6 +44,18 @@ LIGHT_COLORS = {
 
 
 def is_light(values):
+    """Decide whether the light palette should be used.
+
+    ``theme`` set to ``light`` always selects light; ``system`` follows the
+    current Qt color scheme and selects light only when Qt reports
+    ``Qt.ColorScheme.Light``.
+
+    Args:
+        values (dict): Appearance values containing an optional ``theme`` key.
+
+    Returns:
+        bool: ``True`` when the light palette applies.
+    """
     return values.get('theme', 'dark') == 'light' or (values.get('theme') == 'system' and
         QApplication.styleHints().colorScheme() == Qt.ColorScheme.Light)
 
@@ -45,10 +63,32 @@ def is_light(values):
 LIGHT_COLORS.update({value: LIGHT_PALETTE[role] for role, value in DARK_PALETTE.items()})
 
 def palette_for(values):
+    """Select the semantic color mapping for the requested appearance.
+
+    Args:
+        values (dict): Appearance values passed to :func:`is_light`.
+
+    Returns:
+        dict[str, str]: ``LIGHT_PALETTE`` or ``DARK_PALETTE``.
+    """
     return LIGHT_PALETTE if is_light(values) else DARK_PALETTE
 
 
 def stylesheet(source, values):
+    """Adapt a dark style sheet to the current appearance and scale.
+
+    For light mode, six-digit hex colors are looked up in ``LIGHT_COLORS`` (or
+    kept unchanged when unknown) and a few translucent white/dark overlays are
+    swapped for their light equivalents. Every ``pt`` or ``px`` length is then
+    multiplied by ``values['scale'] / 100``.
+
+    Args:
+        source (str): Qt style sheet written against the dark palette.
+        values (dict): Appearance values containing ``theme`` and ``scale``.
+
+    Returns:
+        str: Transformed style sheet.
+    """
     if is_light(values):
         source = re.sub(r'#[0-9a-fA-F]{6}', lambda m: LIGHT_COLORS.get(m[0].upper(), m[0]), source)
         source = source.replace('rgba(24,24,27,238)', 'rgba(255,255,255,238)')
@@ -60,7 +100,20 @@ def stylesheet(source, values):
 
 
 def apply_surface(widget, values, source=None):
-    """Scale layout metrics once from their original values, never cumulatively."""
+    """Scale layout metrics once from their original values, never cumulatively.
+
+    Applies the optional style sheet, marks the widget with a ``lightTheme``
+    property, and walks the widget tree. Original layout margins, spacing,
+    minimum and maximum sizes, and child-specific style sheets are cached on the
+    objects on first application, so repeated calls rescale from the originals.
+    Lucide buttons and labelled glyphs are re-rendered at the scaled size, and
+    every child receives a palette with the semantic text and canvas colors.
+
+    Args:
+        widget (QWidget): Root widget of the surface to update.
+        values (dict): Appearance values containing ``theme`` and ``scale``.
+        source (str | None): Optional style sheet to apply to ``widget``.
+    """
     light = is_light(values)
     colors = palette_for(values)
     widget.setProperty('lightTheme', light)

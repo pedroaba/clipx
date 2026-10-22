@@ -1,4 +1,9 @@
-"""Choose a global shortcut without pressing a chord intercepted by the desktop."""
+"""Choose a global shortcut without pressing a chord intercepted by the desktop.
+
+The picker lets the user toggle modifiers and select a key, validates the
+combination against the platform backend, warns about macOS Spotlight
+conflicts and returns the normalized sequence.
+"""
 
 import sys
 
@@ -19,7 +24,30 @@ from clipx.ui.molecules.shortcut_recorder import display_shortcut
 
 
 class ShortcutPicker(SystemDialog):
+    """Modal picker for choosing the global shortcut to open ClipX.
+
+    Attributes:
+        validate_sequence (callable): Backend binding validator used for preview
+            and acceptance.
+        preview_keys (ShortcutKeycaps): Visual keycaps showing the selection.
+        preview_label (QLabel): Hidden label used by the keycaps display.
+        modifiers (dict[str, QPushButton]): Modifier toggle buttons.
+        key_combo (Select): Key selector.
+        error_label (QLabel): Validation error message.
+        warning_label (QLabel): Non-blocking warning about known conflicts.
+        buttons (QDialogButtonBox): Ok and cancel buttons.
+        use_button (QPushButton): Accept button, disabled when invalid.
+        selected_sequence (str | None): Normalized sequence on acceptance.
+    """
+
     def __init__(self, sequence, parent=None):
+        """Build the picker with modifiers, key selection and validation.
+
+        Args:
+            sequence (QKeySequence | str): Initial sequence to display.
+            parent (QWidget | None): Parent dialog; used to reach the backend
+                validator when available.
+        """
         super().__init__(parent)
         self.validate_sequence = parent.backend.to_binding if parent and hasattr(parent, "backend") else get_platform().shortcuts.to_binding
         self.setWindowTitle("ClipX — Escolher atalho")
@@ -156,11 +184,21 @@ class ShortcutPicker(SystemDialog):
         self.update_preview()
 
     def chosen_sequence(self):
+        """Assemble the sequence from the selected modifiers and key.
+
+        Returns:
+            str: Portable sequence like ``Ctrl+Shift+A``.
+        """
         names = ["Meta" if name == "Super" else name for name, button in self.modifiers.items()
                  if button.isChecked()]
         return "+".join([*names, self.key_combo.currentData()])
 
     def update_preview(self):
+        """Update the keycap preview, Spotlight warning and validation state.
+
+        Validation errors disable the accept button and show the message; a
+        successful validation enables the button.
+        """
         sequence = self.chosen_sequence()
         self.preview_label.setText(display_shortcut(sequence))
         self.preview_keys.set_sequence(sequence)
@@ -183,6 +221,7 @@ class ShortcutPicker(SystemDialog):
         self.use_button.setEnabled(True)
 
     def accept_sequence(self):
+        """Validate and accept the chosen sequence, or show the error."""
         sequence = self.chosen_sequence()
         try:
             self.validate_sequence(sequence)

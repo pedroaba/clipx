@@ -1,10 +1,28 @@
+"""Scrollable clipboard history list with identity-based reconciliation.
+
+Rows are rebuilt only when their clip instance or position changes, so typing in
+the search field does not reset selection or scroll position.
+"""
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtWidgets import QLabel, QListWidget, QListWidgetItem
 from clipx.ui.molecules.clipboard_item import ClipItemWidget
 
 
 class ClipListWidget(QListWidget):
+    """List of clipboard items rendered with one custom widget per row.
+
+    Attributes:
+        preferences (dict): UI preferences used to size rows and build item
+            widgets; the owner replaces it before repopulating.
+        empty_label (QLabel): Overlay label shown when the list has no items.
+    """
+
     def __init__(self, parent=None):
+        """Create the list, its empty-state overlay and scroll configuration.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+        """
         super().__init__(parent)
         self.preferences = {}
         self.setObjectName('ClipList')
@@ -19,10 +37,27 @@ class ClipListWidget(QListWidget):
         self.empty_label.hide()
 
     def resizeEvent(self, event):
+        """Keep the empty-state overlay aligned with the resized viewport.
+
+        Args:
+            event (QResizeEvent): Resize event forwarded to the base class.
+        """
         super().resizeEvent(event)
         self.empty_label.setGeometry(self.viewport().rect().adjusted(20, 0, -20, 0))
 
     def _insert_clip(self, index, item):
+        """Insert a formatted row for one clip at the given position.
+
+        The row height derives from the density, line count and scale
+        preferences, and its surface is themed before being attached.
+
+        Args:
+            index (int): Row index where the item is inserted.
+            item (object): Clip record stored in the item's user data.
+
+        Returns:
+            QListWidgetItem: The created list item.
+        """
         from clipx.ui.foundations.appearance import apply_surface
         from clipx.preferences import validate_ui
         settings = self.preferences
@@ -39,7 +74,20 @@ class ClipListWidget(QListWidget):
         return list_item
 
     def populate(self, items, empty_message='Seu histórico está vazio.\nCopie um texto para começar.'):
-        """Reconcile results by identity; typing must not rebuild unchanged rows."""
+        """Reconcile results by identity; typing must not rebuild unchanged rows.
+
+        Existing rows are reused while matching clips keep their position and
+        identity, obsolete rows are removed and missing rows are inserted around
+        the reused ones. Selection and scroll position are restored afterwards,
+        signals stay blocked during the whole update, and the current-item
+        change is emitted at most once so the preview is not rendered for
+        intermediate states. When the preferences change, the list is cleared
+        and rebuilt from scratch.
+
+        Args:
+            items (list): Clip records in display order.
+            empty_message (str): Text shown by the overlay when no items exist.
+        """
         selected = self.get_selected_clip()
         selected_id = selected.id if selected else None
         scroll = self.verticalScrollBar().value()
@@ -82,5 +130,11 @@ class ClipListWidget(QListWidget):
             self.currentItemChanged.emit(self.currentItem(), None)
 
     def get_selected_clip(self):
+        """Return the clip stored by the current row.
+
+        Returns:
+            object | None: Clip record of the current item, or ``None`` when
+            nothing is selected.
+        """
         current = self.currentItem()
         return current.data(Qt.ItemDataRole.UserRole) if current else None

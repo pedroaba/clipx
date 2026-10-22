@@ -1,3 +1,11 @@
+"""Background supervisor for the platform clipboard listener.
+
+The daemon launches the platform-specific listener as a subprocess and forwards
+its JSON status lines to Qt observers. It deliberately relies on event-based
+listeners instead of polling, which would require disruptive popup windows on
+Wayland.
+"""
+
 import json
 import logging
 import os
@@ -17,10 +25,33 @@ logger = logging.getLogger("clipx.daemon")
 
 
 class ClipboardDaemon(QObject):
+    """Supervise one event listener; never poll with Wayland popup windows.
+
+    The daemon owns a listener subprocess, tracks capture status, and emits
+    ``status_changed`` with the latest ``Result`` whenever that status changes.
+    It starts, supervises, and stops a single background thread that reads the
+    listener's output.
+
+    Attributes:
+        status_changed (pyqtSignal): Qt signal carrying the latest ``Result``.
+        driver: Platform clipboard driver used to build the listener command.
+        status (Result): Most recently reported capture status.
+        storage (Storage): Storage used to locate the database passed to the
+            listener and to persist captured clips.
+        running (bool): True while the listener subprocess is active.
+    """
+
     status_changed = pyqtSignal(object)
-    """Supervise one event listener; never poll with Wayland popup windows."""
 
     def __init__(self, storage: Optional[Storage] = None, driver=None):
+        """Initialize the daemon and its synchronization primitives.
+
+        Args:
+            storage (Optional[Storage]): Storage to use; a default ``Storage``
+                is created when omitted.
+            driver: Clipboard driver to use; the platform clipboard driver is
+                resolved when omitted.
+        """
         super().__init__()
         self.driver = driver or get_platform().clipboard
         self.status = Result(Status.UNAVAILABLE, "Iniciando captura…")
@@ -32,13 +63,32 @@ class ClipboardDaemon(QObject):
         self._process_lock = threading.Lock()
 
     def listener_command(self):
+        """Build the subprocess command for the platform clipboard listener.
+
+        Returns:
+            The argument list produced by the driver for the current database
+            path.
+        """
         return self.driver.listener_command(self.storage.db_path)
 
     def report(self, result):
+        """Store a capture status and notify listeners.
+
+        Args:
+            result (Result): Status object to record and emit.
+        """
         self.status = result
         self.status_changed.emit(result)
 
     def run_loop(self):
+        """Run the listener subprocess and forward its JSON status lines.
+
+        The method blocks until the listener exits or fails to start. Malformed
+        output lines are logged at debug level. When the listener stops without
+        a stop request, the daemon reports that capture is paused. This method
+        is intended to run on the daemon thread created by
+        :meth:`start_background`.
+        """
         try:
             with self._process_lock:
                 if self._stop_event.is_set():
@@ -70,6 +120,12 @@ class ClipboardDaemon(QObject):
                 self._process.stdout.close()
 
     def start_background(self):
+        """Start the listener thread if it is not already running.
+
+        The stop event is cleared before the daemon thread starts, so a stopped
+        daemon can be restarted. Calling this method while the thread is alive
+        has no effect.
+        """
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -77,6 +133,12 @@ class ClipboardDaemon(QObject):
         self._thread.start()
 
     def stop(self):
+        """Stop the listener subprocess, thread, and driver observation.
+
+        The subprocess is terminated and killed if it does not exit within two
+        seconds. The daemon thread is joined for up to two seconds. Driver
+        observation is stopped after the subprocess and thread are handled.
+        """
         self._stop_event.set()
         with self._process_lock:
             process = self._process
@@ -96,9 +158,21 @@ class ClipboardDaemon(QObject):
 
 
 def run_standalone_daemon():
+    """Run the clipboard daemon until a termination signal arrives.
+
+    SIGINT and SIGTERM are converted into a clean daemon stop followed by
+    ``sys.exit(0)``. The main thread waits for the listener thread in short
+    intervals and always stops the daemon on exit.
+    """
     daemon = ClipboardDaemon()
 
     def handle_signal(sig, frame):
+        """Stop the daemon and exit after a termination signal.
+
+        Args:
+            sig (int): Received signal number.
+            frame: Current stack frame supplied by the signal module.
+        """
         logger.info("Received termination signal, shutting down...")
         daemon.stop()
         sys.exit(0)

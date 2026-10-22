@@ -1,9 +1,25 @@
-"""Shared relative-time formatting."""
+"""Shared relative-time formatting.
+
+Provides a single helper that renders SQLite UTC timestamps as short,
+localized relative-time strings for the history list.
+"""
 from datetime import datetime, timezone
 
 
 def format_relative_time(dt_str: str) -> str:
-    """Converts a SQLite UTC timestamp to a friendly relative time string."""
+    """Convert a SQLite UTC timestamp to a friendly relative time string.
+
+    The timestamp is treated as UTC. Labels are in Portuguese: "agora" below
+    one minute, "Nm atrás" below one hour, "Nh atrás" below one day, "ontem"
+    for one day, "Nd atrás" below a week, and ``DD/MM`` beyond that.
+
+    Args:
+        dt_str (str): Timestamp in SQLite ``YYYY-MM-DD HH:MM:SS`` format.
+
+    Returns:
+        str: Relative time label, or the original input string when it cannot
+        be parsed.
+    """
     try:
         # SQLite CURRENT_TIMESTAMP is in UTC: 'YYYY-MM-DD HH:MM:SS'
         dt = datetime.fromisoformat(dt_str).replace(tzinfo=timezone.utc)

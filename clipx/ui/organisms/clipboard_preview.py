@@ -1,4 +1,9 @@
-"""Text-only preview: content is escaped or supplied as plain text."""
+"""Text-only preview: content is escaped or supplied as plain text.
+
+The pane renders clips as escaped HTML or plain text, never as raw markup, and
+switches between text, color, code and URL presentations through a stacked
+widget. Syntax highlighting is optional and degrades to plain text on failure.
+"""
 import html
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
@@ -11,7 +16,29 @@ from clipx.utils import format_relative_time
 
 
 class PreviewPaneWidget(QFrame):
+    """Preview pane for the selected clip, with text, color and empty pages.
+
+    Attributes:
+        preferences (dict): UI preferences controlling font size, scale,
+            syntax highlighting and light/dark palettes.
+        current_item (object | None): Clip currently rendered, or ``None`` when
+            the empty page is shown.
+        type_badge (QLabel): Badge with the clip type or language.
+        time_label (QLabel): Relative timestamp of the clip.
+        stats_label (QLabel): Line, character and word counts.
+        stack (QStackedWidget): Holds the text, color and empty pages.
+        text_browser (QTextBrowser): Renderer for text, code and URL content.
+        color_swatch (QFrame): Solid swatch for color clips.
+        color_details (QTextBrowser): Hex and RGB details for color clips.
+        empty_page (QLabel): Placeholder shown when nothing is selected.
+    """
+
     def __init__(self, parent=None):
+        """Build the header, the stacked pages and the initial empty state.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+        """
         super().__init__(parent)
         self.setObjectName('PreviewPane')
         self.preferences = {}
@@ -55,6 +82,7 @@ class PreviewPaneWidget(QFrame):
         self.show_empty()
 
     def show_empty(self):
+        """Clear the pane and display the empty page."""
         self.current_item = None
         self.type_badge.hide()
         self.stats_label.clear()
@@ -62,6 +90,16 @@ class PreviewPaneWidget(QFrame):
         self.stack.setCurrentIndex(2)
 
     def display_item(self, item):
+        """Render a clip, skipping work when the item and preferences match.
+
+        Color clips show the swatch and RGB details; code clips are highlighted
+        with Pygments unless syntax highlighting is disabled; valid HTTP(S) URLs
+        become escaped links. Any highlighting error falls back to plain text.
+
+        Args:
+            item (object): Clip record with ``type``, ``content``, ``language``,
+                ``line_count``, ``char_count`` and ``updated_at`` attributes.
+        """
         if self.current_item == item and getattr(self, '_rendered_preferences', None) == self.preferences:
             return
         self._rendered_preferences = self.preferences.copy()

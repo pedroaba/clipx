@@ -211,6 +211,14 @@ uv run clipx
 
 Para iniciar apenas na bandeja, use `uv run clipx tray`.
 
+### Documentação no código
+
+Todo módulo, classe, função e método do projeto usa docstrings no padrão
+[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings),
+em inglês, com as seções `Args:`, `Returns:`, `Yields:`, `Raises:` e `Attributes:`
+quando aplicáveis. As docstrings descrevem o comportamento observado no código,
+inclusive efeitos colaterais, persistência e limites das integrações nativas.
+
 ### Testes
 
 ```bash

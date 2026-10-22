@@ -8,7 +8,21 @@ from clipx.ui.organisms.clipboard_actions import ActionBarWidget
 
 
 class ClipboardLayout(QWidget):
+    """Search shell that owns the history list, preview, and action bar.
+
+    The layout stacks the search header, an optional status label, a horizontal
+    splitter, and the action bar. Vertical space is given to the splitter so the
+    list and preview expand while the header and footer keep their size.
+    """
+
     def __init__(self, shortcuts, parent=None):
+        """Assemble the clipboard page widgets.
+
+        Args:
+            shortcuts (Mapping[str, str]): Shortcut sequences used by the
+                action bar to label and trigger actions.
+            parent (QWidget, optional): Parent widget that owns the layout.
+        """
         super().__init__(parent)
         self.setObjectName('CentralWidget')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

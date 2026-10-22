@@ -1,4 +1,9 @@
-"""Frozen-artifact smoke test using private storage and no system clipboard."""
+"""Frozen-artifact smoke test using private storage and no system clipboard.
+
+The script runs entirely offscreen against a temporary directory, exercising the
+capture subprocess, SQLite storage, local sockets, native driver imports, Qt
+widgets, fonts, icons, preferences, and themes to verify a packaged build.
+"""
 import json
 import os
 from pathlib import Path
@@ -9,6 +14,22 @@ from types import SimpleNamespace
 
 
 def main():
+    """Run the offscreen smoke test against temporary, private state.
+
+    The test forces the offscreen Qt platform, verifies the capture subprocess
+    and storage round trip, checks local socket availability, imports or
+    exercises the native clipboard driver per platform, then builds the main
+    window and preferences dialog to check icons, fonts, and themes. A JSON
+    summary is printed on success.
+
+    Returns:
+        int: Zero when every check passes.
+
+    Raises:
+        AssertionError: If any check fails.
+        subprocess.CalledProcessError: If the capture subprocess fails.
+        subprocess.TimeoutExpired: If the capture subprocess exceeds 30 seconds.
+    """
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     from PyQt6.QtWidgets import QApplication
     from clipx.processes import module_command
@@ -56,12 +77,51 @@ def main():
         platform = SimpleNamespace(name='test', effects=OpaqueWindowEffects(), clipboard=object(), desktop=object())
         window = ClipXMainWindow(storage, ShortcutSettings(root / 'settings.json'), platform)
         class Shortcuts:
+            """Minimal shortcut backend stub used by the preferences dialog."""
+
             default_sequence = 'Ctrl+Shift+V'
             modifier_hint = 'Smoke test'
-            def read(self): return self.default_sequence
-            def from_binding(self, value): return value
-            def to_binding(self, value): return value
-            def conflicts(self, value): return []
+
+            def read(self):
+                """Return the stub's default sequence.
+
+                Returns:
+                    str: The default shortcut sequence.
+                """
+                return self.default_sequence
+
+            def from_binding(self, value):
+                """Return a binding unchanged.
+
+                Args:
+                    value: Binding to pass through.
+
+                Returns:
+                    The same binding.
+                """
+                return value
+
+            def to_binding(self, value):
+                """Return a binding unchanged.
+
+                Args:
+                    value: Binding to pass through.
+
+                Returns:
+                    The same binding.
+                """
+                return value
+
+            def conflicts(self, value):
+                """Report no conflicting shortcuts.
+
+                Args:
+                    value: Candidate binding, ignored.
+
+                Returns:
+                    list: Always an empty list.
+                """
+                return []
         dialog = PreferencesDialog(window, Shortcuts())
         assert not dialog.windowIcon().isNull(), 'Application icon unavailable'
         for theme in ('dark', 'light'):

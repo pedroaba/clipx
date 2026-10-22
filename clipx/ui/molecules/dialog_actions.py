@@ -5,10 +5,22 @@ from PyQt6.QtWidgets import QWidget, QPushButton, QHBoxLayout
 
 
 class DialogActions(QWidget):
+    """Secondary and primary dialog buttons with an animated apply state.
+
+    Attributes:
+        accepted (pyqtSignal): Emitted when the apply button is clicked.
+        rejected (pyqtSignal): Emitted when the cancel button is clicked.
+    """
+
     accepted = pyqtSignal()
     rejected = pyqtSignal()
 
     def __init__(self, parent=None):
+        """Create the cancel and apply buttons and the spinner timer.
+
+        Args:
+            parent (QWidget, optional): Parent widget that owns the actions.
+        """
         super().__init__(parent)
         box = QHBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
@@ -31,10 +43,23 @@ class DialogActions(QWidget):
         self._spinner.timeout.connect(self._animate)
 
     def set_apply_enabled(self, enabled):
+        """Record whether apply may be enabled and refresh its current state.
+
+        While a loading action runs, the apply button stays disabled regardless
+        of the requested value.
+
+        Args:
+            enabled (bool): Whether apply should be enabled when idle.
+        """
         self._apply_enabled = enabled
         self.apply.setEnabled(enabled and not self.loading)
 
     def _animate(self):
+        """Advance the spinner angle and redraw the apply icon.
+
+        The icon size and color are derived from the owning window's
+        preferences and current palette.
+        """
         from clipx.ui.foundations.icons import loading_icon
         from clipx.ui.foundations.appearance import palette_for
         values = self.window().window.preferences
@@ -44,6 +69,20 @@ class DialogActions(QWidget):
         self.apply.setIconSize(QSize(size, size))
 
     def run_loading(self, action):
+        """Run an action while showing a spinner and disabling both buttons.
+
+        If an action is already loading, the new action runs immediately without
+        changing the existing loading state. The spinner only starts when motion
+        is enabled in preferences and by the platform effects. Buttons and icon
+        are always restored in a ``finally`` block, and the return value of the
+        action is propagated.
+
+        Args:
+            action (Callable[[], Any]): Work to execute while loading is shown.
+
+        Returns:
+            Any: The value returned by ``action``.
+        """
         # Preferences delegates shortcut persistence to the same action group.
         if self.loading:
             return action()

@@ -1,3 +1,4 @@
+"""Linux activation tokens for shortcut launches and X11 startup notifications."""
 import os
 from types import SimpleNamespace
 import unittest
@@ -7,13 +8,17 @@ from clipx.platforms.linux.activation import activation_token_for_launch, x11_st
 
 
 class ActivationTests(unittest.TestCase):
+    """Cover token reuse, startup-notification creation and fallback behavior."""
+
     def test_native_activation_token_is_preserved_without_creating_another(self):
+        """An existing native token wins and the X11 fallback is not called."""
         with patch.dict(os.environ, {"XDG_ACTIVATION_TOKEN": "native-token"}):
             with patch("clipx.platforms.linux.activation.x11_startup_token") as fallback:
                 self.assertEqual(activation_token_for_launch(), "native-token")
         fallback.assert_not_called()
 
     def test_gnome_custom_shortcut_gets_a_startup_notification_when_needed(self):
+        """A Wayland launch without tokens creates one X11 startup notification."""
         environment = {"XDG_ACTIVATION_TOKEN": "", "DESKTOP_STARTUP_ID": "",
                        "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0", "QT_QPA_PLATFORM": "wayland;xcb"}
         with patch.dict(os.environ, environment):
@@ -22,6 +27,7 @@ class ActivationTests(unittest.TestCase):
                 create.assert_called_once()
 
     def test_offscreen_tests_and_x11_only_sessions_do_not_create_wayland_tokens(self):
+        """Offscreen runs and X11-only sessions return an empty token without side effects."""
         for platform, wayland in (("offscreen", "wayland-0"), ("xcb", "")):
             with patch.dict(os.environ, {"QT_QPA_PLATFORM": platform, "WAYLAND_DISPLAY": wayland,
                                          "XDG_ACTIVATION_TOKEN": "", "DESKTOP_STARTUP_ID": ""}):
@@ -31,6 +37,7 @@ class ActivationTests(unittest.TestCase):
 
     @unittest.skipUnless(__import__("importlib.util").util.find_spec("Xlib"), "requires Linux python-xlib")
     def test_startup_notification_uses_server_time_and_an_unmapped_requestor(self):
+        """The token embeds server time and is sent from a temporary unmapped window."""
         from Xlib import X
 
         connection = Mock()
@@ -57,6 +64,7 @@ class ActivationTests(unittest.TestCase):
         connection.close.assert_called_once()
 
     def test_unavailable_startup_notification_does_not_stop_opening_the_app(self):
+        """A failing startup-notification helper degrades to an empty token."""
         with patch.dict(os.environ, {"XDG_ACTIVATION_TOKEN": "", "DESKTOP_STARTUP_ID": "",
                                      "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0", "QT_QPA_PLATFORM": "wayland"}):
             with patch("clipx.platforms.linux.activation.x11_startup_token", side_effect=RuntimeError("unavailable")):

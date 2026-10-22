@@ -1,3 +1,9 @@
+"""Heuristic classification of clipboard text.
+
+The detector recognizes colors, URLs, JSON, and common source-code patterns.
+Pygments is used when installed but is treated as an optional enhancement.
+"""
+
 import json
 import re
 from dataclasses import dataclass
@@ -18,14 +24,39 @@ URL_REGEX = re.compile(r"^(https?|ftp|file)://[^\s/$.?#].[^\s]*$", re.IGNORECASE
 
 @dataclass
 class DetectionResult:
+    """Classification assigned to a piece of clipboard content.
+
+    Attributes:
+        clip_type (str): One of ``"color"``, ``"url"``, ``"code"``, or
+            ``"text"``.
+        language (Optional[str]): Detected programming or markup language for
+            code clips; None otherwise.
+        color_hex (Optional[str]): Normalized hex color for hex and RGB inputs,
+            the original HSL(A) text for HSL inputs, or None for other types.
+    """
+
     clip_type: str  # 'color', 'url', 'code', 'text'
     language: Optional[str] = None
     color_hex: Optional[str] = None
 
 
 class ContentDetector:
+    """Stateless helpers that classify clipboard content heuristically."""
+
     @staticmethod
     def detect(content: str) -> DetectionResult:
+        """Classify content as a color, URL, code, or plain text.
+
+        Detection checks, in order: hex/RGB/HSL colors, URLs, valid JSON,
+        language-specific and symbol-based code heuristics, then plain text.
+        Empty or whitespace-only content is classified as text.
+
+        Args:
+            content (str): Clipboard text to inspect.
+
+        Returns:
+            DetectionResult: The detected type and any associated metadata.
+        """
         stripped = content.strip()
         if not stripped:
             return DetectionResult(clip_type="text")
@@ -59,6 +90,18 @@ class ContentDetector:
 
     @staticmethod
     def _rgb_to_hex(rgb_str: str) -> Optional[str]:
+        """Convert an RGB/RGBA function string to an uppercase hex color.
+
+        The first three integers in the string are used. Each channel is
+        clamped to the 0-255 range.
+
+        Args:
+            rgb_str (str): RGB or RGBA function text such as ``rgb(12, 34, 56)``.
+
+        Returns:
+            Optional[str]: ``#RRGGBB`` when three channel values are present,
+            otherwise None.
+        """
         nums = re.findall(r"\d+", rgb_str)
         if len(nums) >= 3:
             r, g, b = int(nums[0]), int(nums[1]), int(nums[2])
@@ -70,6 +113,21 @@ class ContentDetector:
 
     @staticmethod
     def _check_code(text: str) -> Tuple[bool, Optional[str]]:
+        """Score text using language keywords and common programming symbols.
+
+        Keyword matches contribute three points each and symbol occurrences one
+        point each. When Pygments is available, it is consulted if the score is
+        at least two or the text spans more than two lines; a non-plain lexer
+        result marks the text as code. Otherwise a score of at least three
+        marks it as code.
+
+        Args:
+            text (str): Clipboard text to evaluate.
+
+        Returns:
+            Tuple[bool, Optional[str]]: Whether the text is code and, when
+            known, its language name or alias.
+        """
         lines = text.splitlines()
         code_score = 0
         detected_lang = None

@@ -1,4 +1,10 @@
-"""Recording, draft validation and transactional apply, independent of page layout."""
+"""Recording, draft validation and transactional apply, independent of page layout.
+
+The controller mediates between the shortcut dialog, the shortcut settings
+store and the global-shortcut backend. Recorded sequences only change the draft;
+persisting happens on apply, and a failed apply rolls back the global binding
+and any transferred conflicts.
+"""
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import QApplication
@@ -8,7 +14,36 @@ from clipx.ui.foundations.theme import BORDER_ACCENT, TEXT_SECONDARY
 
 
 class ShortcutsController(QObject):
+    """Coordinate recording, validation and transactional saving of shortcuts.
+
+    Attributes:
+        view (ShortcutsDialog): Dialog exposing recorders, sidebar, search,
+            footer and message labels.
+        window (ClipXMainWindow): Window that owns the shortcut settings.
+        backend (object): Global-shortcut backend used to read, write, pause,
+            resume and inspect system conflicts.
+        recording_name (str | None): Name of the shortcut currently recording.
+        paused_binding (str | None): Global binding restored when recording
+            stops; ``None`` when no pause is active.
+        original_global (str | None): Global binding read at startup, used for
+            rollback and change detection.
+        current_category (str): Category used by the last filter request.
+        pending_count (int): Number of draft values differing from the baseline.
+        baseline (dict[str, str] | None): Saved values the draft is compared to.
+        recording_timer (QTimer): Single-shot 30 s timeout that cancels recording.
+    """
+
     def __init__(self, view, window, backend):
+        """Wire view signals and snapshot the initial draft.
+
+        When the backend cannot be read, global-shortcut controls are disabled
+        and an error message is shown instead of failing the whole dialog.
+
+        Args:
+            view (ShortcutsDialog): Dialog providing the widgets to control.
+            window (ClipXMainWindow): Window that owns the shortcut settings.
+            backend (object): Global-shortcut backend implementation.
+        """
         super().__init__(view)
         self.view = view
         self.window = window
@@ -48,10 +83,20 @@ class ShortcutsController(QObject):
         self.update_draft()
 
     def draft(self):
+        """Collect the current recorder values as portable key text.
+
+        Returns:
+            dict[str, str]: Sequences indexed by shortcut name.
+        """
         return {name: recorder.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
                 for name, recorder in self.view.recorders.items()}
 
     def update_draft(self):
+        """Recompute pending changes, mark modified rows and refresh the footer.
+
+        Does nothing until a baseline exists. The view's ``update_pending`` hook
+        is called when present so composite dialogs can combine counters.
+        """
         if self.baseline is None:
             return
         draft = self.draft()
@@ -63,6 +108,14 @@ class ShortcutsController(QObject):
             self.view.update_pending()
 
     def change_category(self, category):
+        """Select a category and refilter the rows.
+
+        Recording is always stopped. While the global binding is paused, the
+        previous category is reselected and the request is ignored.
+
+        Args:
+            category (str): Category key to display.
+        """
         self.stop_recording()
         if self.paused_binding is not None:
             self.view.sidebar.buttons[self.current_category].setChecked(True)
@@ -71,24 +124,59 @@ class ShortcutsController(QObject):
         self.filter_rows()
 
     def filter_rows(self, query=None):
+        """Filter rows using the current category and search field text.
+
+        Recording is always stopped; the request is ignored while the global
+        binding is paused.
+
+        Args:
+            query (str | None): Unused filter argument provided by the search
+                signal; the widget text is read directly.
+        """
         self.stop_recording()
         if self.paused_binding is not None:
             return
         self.view.sections.filter(self.current_category, self.view.search_field.input.text())
 
     def detach(self):
+        """Disconnect the application quit handler from this controller."""
         try:
             QApplication.instance().aboutToQuit.disconnect(self.stop_recording)
         except (TypeError, RuntimeError):
             pass
 
     def decode_binding(self, binding):
+        """Convert a backend binding into a key sequence.
+
+        Args:
+            binding (object): Platform-specific binding representation.
+
+        Returns:
+            QKeySequence: Decoded key sequence.
+        """
         return self.backend.from_binding(binding)
 
     def encode_binding(self, sequence):
+        """Convert a key sequence into a backend binding.
+
+        Args:
+            sequence (QKeySequence | str): Sequence to encode.
+
+        Raises:
+            ValueError: If the backend rejects the sequence.
+
+        Returns:
+            object: Platform-specific binding representation.
+        """
         return self.backend.to_binding(sequence)
 
     def choose_global(self):
+        """Open the shortcut picker and place the chosen sequence in the draft.
+
+        The combination is rejected when it is already assigned to a search
+        action. System conflicts are reported but never applied here; the user
+        must press Apply to review the transfer.
+        """
         self.stop_recording()
         if self.paused_binding is not None:
             return
@@ -111,6 +199,13 @@ class ShortcutsController(QObject):
             self.set_message("global", str(exc), error=True)
 
     def set_message(self, name, message, error=False):
+        """Write a styled status message for one shortcut row.
+
+        Args:
+            name (str): Shortcut name the message belongs to.
+            message (str): Text to display.
+            error (bool): Whether to use the error accent color.
+        """
         self.view.messages[name].setText(message)
         from clipx.ui.foundations.appearance import stylesheet
         source = f"color: {BORDER_ACCENT if error else TEXT_SECONDARY};"
@@ -118,6 +213,15 @@ class ShortcutsController(QObject):
         self.view.messages[name].setStyleSheet(stylesheet(source, self.window.preferences))
 
     def start_recording(self, name):
+        """Pause the global shortcut and start recording one sequence.
+
+        The global binding is paused only when the global editor is enabled.
+        A failing pause leaves recording stopped and reports the error. A
+        30-second single-shot timer cancels recording if no key arrives.
+
+        Args:
+            name (str): Shortcut name to record.
+        """
         self.stop_recording()
         if self.paused_binding is not None:
             return
@@ -133,6 +237,11 @@ class ShortcutsController(QObject):
         self.update_draft()
 
     def stop_recording(self):
+        """Stop recording and resume the paused global binding.
+
+        A failed resume is reported in the view's error label instead of being
+        raised. The pending state is recomputed afterwards regardless.
+        """
         self.recording_timer.stop()
         name = self.recording_name
         self.recording_name = None
@@ -151,6 +260,17 @@ class ShortcutsController(QObject):
         self.update_draft()
 
     def record_sequence(self, name, sequence):
+        """Validate and accept a recorded sequence into the draft.
+
+        For the global shortcut, the sequence must be encodable and free of
+        search and system conflicts. For search shortcuts, the whole draft is
+        validated and the sequence must differ from the global binding. Invalid
+        sequences leave the draft untouched and show an error.
+
+        Args:
+            name (str): Shortcut name being recorded.
+            sequence (QKeySequence | str): Recorded sequence.
+        """
         try:
             if name == "global":
                 self.encode_binding(sequence)
@@ -175,11 +295,20 @@ class ShortcutsController(QObject):
         self.set_message(name, "Combinação válida · clique em Aplicar para ativar.")
 
     def clear_shortcut(self, name):
+        """Clear a shortcut in the draft and mark it pending.
+
+        Args:
+            name (str): Shortcut name to clear.
+        """
         self.stop_recording()
         self.view.recorders[name].clear()
         self.set_message(name, "Desativado no rascunho · clique em Aplicar para confirmar.")
 
     def restore_defaults(self):
+        """Restore default sequences in the draft without saving them.
+
+        The global default is restored only when the global editor is enabled.
+        """
         self.stop_recording()
         for name, (_, value) in SHORTCUTS.items():
             self.view.editors[name].setKeySequence(QKeySequence(value))
@@ -189,9 +318,23 @@ class ShortcutsController(QObject):
             self.set_message("global", "Padrão restaurado · verifique possíveis conflitos ao aplicar.")
 
     def save(self):
+        """Apply the draft with loading feedback.
+
+        Returns:
+            object: Whatever ``run_loading`` returns for the apply callback.
+        """
         return self.view.buttons.run_loading(self._save)
 
     def _save(self):
+        """Persist the draft transactionally, rolling back on failure.
+
+        Search shortcuts are validated first. If the global binding changed, the
+        backend is written directly or, when the sequence is in use, reassigned
+        after user confirmation. On any error the previous global binding is
+        restored and transferred conflicts are given back before the error is
+        shown. On success the window applies the new shortcuts and the dialog
+        accepts.
+        """
         self.stop_recording()
         if self.paused_binding is not None:
             return

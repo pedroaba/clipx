@@ -11,6 +11,15 @@ from clipx.shortcuts import normalize
 
 
 def display_shortcut(sequence):
+    """Format a key sequence for display in the recorder.
+
+    Args:
+        sequence (str | QKeySequence): Sequence to format.
+
+    Returns:
+        str: ``'Desativado'`` for an empty sequence, native text on macOS, or a
+            ``' + '``-joined list of modifier names and a mapped key name.
+    """
     sequence = QKeySequence(sequence)
     if sequence.isEmpty():
         return "Desativado"
@@ -30,12 +39,30 @@ def display_shortcut(sequence):
 
 
 class ShortcutRecorder(QPushButton):
+    """Click-to-record shortcut control that renders keycaps instead of text.
+
+    Attributes:
+        recordingRequested (pyqtSignal): Emitted when the button is clicked.
+        recordingCancelled (pyqtSignal): Emitted on Escape or when focus leaves
+            while recording.
+        sequenceRecorded (pyqtSignal): Emitted with the normalized combination
+            captured from a key press.
+        sequence_changed (pyqtSignal): Emitted when :meth:`setKeySequence`
+            receives a different sequence.
+    """
+
     recordingRequested = pyqtSignal()
     recordingCancelled = pyqtSignal()
     sequenceRecorded = pyqtSignal(str)
     sequence_changed = pyqtSignal()
 
     def __init__(self, sequence="", parent=None):
+        """Create the recorder with centered keycaps.
+
+        Args:
+            sequence (str, optional): Initial key sequence. Defaults to empty.
+            parent (QWidget, optional): Parent widget that owns the recorder.
+        """
         super().__init__(parent)
         self.recording = False
         self._sequence = QKeySequence(sequence)
@@ -56,9 +83,22 @@ class ShortcutRecorder(QPushButton):
         self.setToolTip("Clique para gravar uma combinação. Esc cancela a gravação.")
 
     def keySequence(self):
+        """Return a copy of the current key sequence.
+
+        Returns:
+            QKeySequence: The sequence currently stored by the recorder.
+        """
         return QKeySequence(self._sequence)
 
     def setKeySequence(self, sequence):
+        """Store a sequence and refresh the display and accessibility name.
+
+        While recording, the visual state is left untouched. When the sequence
+        actually changes, ``sequence_changed`` is emitted.
+
+        Args:
+            sequence (str | QKeySequence): Sequence to store.
+        """
         changed = self._sequence != QKeySequence(sequence)
         self._sequence = QKeySequence(sequence)
         if not self.recording:
@@ -72,17 +112,32 @@ class ShortcutRecorder(QPushButton):
             self.sequence_changed.emit()
 
     def setText(self, text):
+        """Set the button text and mirror it in the keycap row.
+
+        Args:
+            text (str): Message shown by the button and the keycap row.
+        """
         super().setText(text)
         if hasattr(self, 'keycaps'):
             self.keycaps.set_message(text)
             self.updateGeometry()
 
     def sizeHint(self):
+        """Return a size wide enough for the keycaps with minimum padding.
+
+        Returns:
+            QSize: Preferred widget size, or the base hint before keycaps exist.
+        """
         if not hasattr(self, 'keycaps'):
             return super().sizeHint()
         return QSize(max(96, self.keycaps.sizeHint().width() + 16), 36)
 
     def paintEvent(self, event):
+        """Draw the button chrome without its text label.
+
+        Args:
+            event (QPaintEvent): Paint event supplied by Qt.
+        """
         option = QStyleOptionButton()
         self.initStyleOption(option)
         option.text = ''  # Keycap atoms render the sequence instead of the button label.
@@ -90,9 +145,11 @@ class ShortcutRecorder(QPushButton):
         self.style().drawControl(QStyle.ControlElement.CE_PushButton, option, painter, self)
 
     def clear(self):
+        """Clear the stored sequence and restore the placeholder display."""
         self.setKeySequence(QKeySequence())
 
     def start_recording(self):
+        """Enter recording mode, apply the recording style, and take focus."""
         self.recording = True
         self.setProperty("recording", True)
         self.style().unpolish(self)
@@ -101,6 +158,7 @@ class ShortcutRecorder(QPushButton):
         self.setFocus(Qt.FocusReason.MouseFocusReason)
 
     def stop_recording(self):
+        """Leave recording mode and repaint the stored sequence."""
         self.recording = False
         self.setProperty("recording", False)
         self.style().unpolish(self)
@@ -108,6 +166,15 @@ class ShortcutRecorder(QPushButton):
         self.setKeySequence(self._sequence)
 
     def event(self, event):
+        """Intercept keys while recording so they are captured, not navigated.
+
+        Args:
+            event (QEvent): Event delivered to the widget.
+
+        Returns:
+            bool: True when the event was consumed during recording; otherwise
+                the base class result.
+        """
         # Capture Tab/Enter as keys instead of navigating or activating dialog buttons.
         if self.recording and event.type() == QEvent.Type.ShortcutOverride:
             event.accept()
@@ -118,6 +185,16 @@ class ShortcutRecorder(QPushButton):
         return super().event(event)
 
     def keyPressEvent(self, event):
+        """Handle a key press during recording.
+
+        Escape emits ``recordingCancelled``. Modifier-only presses update a
+        preview message without ending recording. Any other combination is
+        normalized and emitted through ``sequenceRecorded``; combinations that
+        normalization rejects are ignored. Auto-repeat events are dropped.
+
+        Args:
+            event (QKeyEvent): Key event to process.
+        """
         if not self.recording:
             return super().keyPressEvent(event)
         if event.isAutoRepeat():
@@ -152,6 +229,11 @@ class ShortcutRecorder(QPushButton):
         self.sequenceRecorded.emit(sequence)
 
     def focusOutEvent(self, event):
+        """Cancel recording when the widget loses focus.
+
+        Args:
+            event (QFocusEvent): Focus event forwarded to the base class.
+        """
         if self.recording:
             self.recordingCancelled.emit()
         super().focusOutEvent(event)

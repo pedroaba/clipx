@@ -5,6 +5,15 @@ from clipx.shortcuts import SHORTCUTS
 
 @dataclass(frozen=True)
 class ShortcutSpec:
+    """Immutable presentation metadata for one shortcut action.
+
+    Attributes:
+        name (str): Action identifier also used as the shortcut key.
+        title (str): Human-readable action name.
+        description (str): Explanation of what the action does.
+        category (str): Grouping key used by the preferences navigation.
+    """
+
     name: str
     title: str
     description: str

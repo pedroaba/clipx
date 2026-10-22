@@ -6,18 +6,49 @@ from clipx.ui.foundations.theme import BG_CARD, BG_CARD_HOVER, BORDER_DEFAULT, T
 
 
 class _SelectStyle(QProxyStyle):
+    """Proxy style that disables the native combo-box popup.
+
+    Returning ``0`` for ``SH_ComboBox_Popup`` makes Qt use the regular list
+    view provided by :class:`Select` instead of the macOS native menu.
+    """
+
     def styleHint(self, hint, option=None, widget=None, returnData=None):
+        """Report whether the native popup should be used.
+
+        Args:
+            hint (QStyle.StyleHint): Style hint being queried.
+            option (QStyleOption, optional): Style option for the widget.
+            widget (QWidget, optional): Widget the hint applies to.
+            returnData (object, optional): Extra data for the hint.
+
+        Returns:
+            int: Zero for ``SH_ComboBox_Popup``; otherwise the inherited hint.
+        """
         if hint == QStyle.StyleHint.SH_ComboBox_Popup:
             return 0  # Use our list popup instead of the native macOS menu.
         return super().styleHint(hint, option, widget, returnData)
 
 
 class _OptionDelegate(QStyledItemDelegate):
+    """Item delegate that draws a check mark on the current option."""
+
     def __init__(self, select):
+        """Create the delegate bound to ``select``.
+
+        Args:
+            select (Select): Combo box whose current index is highlighted.
+        """
         super().__init__(select)
         self.select = select
 
     def paint(self, painter, option, index):
+        """Paint the standard item and overlay a check mark when selected.
+
+        Args:
+            painter (QPainter): Painter provided by the view.
+            option (QStyleOptionViewItem): Item layout and state information.
+            index (QModelIndex): Model index of the item being painted.
+        """
         super().paint(painter, option, index)
         if index.row() == self.select.currentIndex():
             painter.save()
@@ -29,7 +60,14 @@ class _OptionDelegate(QStyledItemDelegate):
 
 
 class _OptionsList(QListView):
+    """Popup list with a translucent heading above the options."""
+
     def __init__(self, parent):
+        """Create the list and reserve space for its heading.
+
+        Args:
+            parent (QWidget): Parent widget that owns the list.
+        """
         super().__init__(parent)
         self.setViewportMargins(0, 32, 0, 0)
         self.heading = QLabel(self)
@@ -37,12 +75,31 @@ class _OptionsList(QListView):
         self.heading.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     def resizeEvent(self, event):
+        """Keep the heading positioned across the top of the resized list.
+
+        Args:
+            event (QResizeEvent): Resize event forwarded to the base class.
+        """
         super().resizeEvent(event)
         self.heading.setGeometry(14, 6, self.width() - 28, 28)
 
 
 class Select(QComboBox):
+    """Themed combo box with a custom list popup and standard semantics.
+
+    The widget keeps normal combo-box behavior, including item data and current
+    index signals, while replacing the native popup with a list that has a
+    heading and a check mark for the current option.
+    """
+
     def __init__(self, parent=None, *, heading='Selecionar opção'):
+        """Create the styled select and configure its popup view.
+
+        Args:
+            parent (QWidget, optional): Parent widget that owns the select.
+            heading (str, optional): Text shown above the popup options.
+                Defaults to ``'Selecionar opção'``.
+        """
         super().__init__(parent)
         self.setObjectName('Select')
         self._select_style = _SelectStyle()
@@ -81,6 +138,11 @@ class Select(QComboBox):
         ''')
 
     def paintEvent(self, event):
+        """Paint the combo box and then draw its custom chevron.
+
+        Args:
+            event (QPaintEvent): Paint event forwarded to the base class.
+        """
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -89,6 +151,12 @@ class Select(QComboBox):
         painter.drawPolyline(QPolygonF([QPointF(x - 4, y - 2), QPointF(x, y + 2), QPointF(x + 4, y - 2)]))
 
     def showPopup(self):
+        """Show the option list at a computed size and screen position.
+
+        The popup is at least as wide as the combo box, grows to fit visible
+        rows up to ``maxVisibleItems``, and flips above the combo box when there
+        is not enough room below. Its geometry is clamped to the screen.
+        """
         self.view().setMinimumWidth(max(self.width(), 160))
         super().showPopup()
         popup = self.view().window()

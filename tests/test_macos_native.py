@@ -1,4 +1,7 @@
-"""Opt-in integration checks using a private pasteboard; never alter the global clipboard."""
+"""Opt-in macOS checks for chrome, pasteboard, shortcuts, tray and material.
+
+Native integration checks use a private pasteboard and never alter the global clipboard.
+"""
 import os
 import sys
 import unittest
@@ -7,7 +10,10 @@ from uuid import uuid4
 
 @unittest.skipUnless(sys.platform == 'darwin' and os.environ.get('CLIPX_TEST_MACOS'), 'requires opt-in native macOS session')
 class MacOSNativeTests(unittest.TestCase):
+    """Native macOS chrome, pasteboard, shortcut and tray behavior."""
+
     def test_dialog_chrome_uses_native_traffic_lights_and_dark_tint(self):
+        """Dialogs use native traffic lights, unified toolbar and the dark window tint."""
         import AppKit
         import objc
         from PyQt6.QtWidgets import QApplication, QWidget
@@ -40,6 +46,7 @@ class MacOSNativeTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_private_pasteboard_write_marker_and_observation(self):
+        """Writes mark the board as owned and polling ignores own or unchanged content."""
         import AppKit
         from unittest.mock import Mock
         from clipx.platforms.macos.clipboard import MacOSClipboardDriver, TEXT_TYPE, SELF_TYPE
@@ -58,6 +65,7 @@ class MacOSNativeTests(unittest.TestCase):
         sink.save.assert_called_once_with('External private test')
 
     def test_carbon_register_unregister(self):
+        """Carbon hot keys register a real handle and unregister removes its callback."""
         from PyQt6.QtWidgets import QApplication
         from clipx.platforms.macos.shortcuts import CarbonHotKeys
         app = QApplication.instance() or QApplication([])
@@ -69,6 +77,7 @@ class MacOSNativeTests(unittest.TestCase):
         self.assertFalse(native.callbacks)
 
     def test_background_observer_stops_and_records_private_test_board(self):
+        """A background observer records private board text and stops promptly."""
         import AppKit
         from pathlib import Path
         import tempfile
@@ -86,6 +95,11 @@ class MacOSNativeTests(unittest.TestCase):
             stopped, reported = threading.Event(), threading.Event()
             results = []
             def report(result):
+                """Record one observation result and flag it as reported.
+
+                Args:
+                    result (Result): Status reported by the clipboard driver.
+                """
                 results.append(result)
                 reported.set()
             thread = threading.Thread(target=driver.start_observation,
@@ -101,6 +115,7 @@ class MacOSNativeTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
 
     def test_native_material_is_a_noninteractive_sibling_of_qt(self):
+        """The native glass view is a noninteractive sibling that tracks the Qt window."""
         from PyQt6.QtWidgets import QApplication
         app = QApplication.instance() or QApplication([])
         if app.platformName() != 'cocoa':
@@ -137,6 +152,7 @@ class MacOSNativeTests(unittest.TestCase):
                 app.processEvents()
 
     def test_accessibility_api_reads_status_without_prompt(self):
+        """Accessibility status is readable and the request path is exercised without prompting."""
         from clipx.platforms.macos.permissions import MacOSPermissions
         permissions = MacOSPermissions()
         self.assertIsInstance(permissions.can_paste(), bool)
@@ -147,6 +163,7 @@ class MacOSNativeTests(unittest.TestCase):
             request.assert_called_once()
 
     def test_tray_menu_tracking_callback_never_queries_mouse_event(self):
+        """Menu-tracking notifications never query a mouse event and keep the tray visible."""
         from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
         app = QApplication.instance() or QApplication([])
         if app.platformName() != 'cocoa':
@@ -182,6 +199,7 @@ class MacOSNativeTests(unittest.TestCase):
             tray.hide()
 
     def test_light_native_chrome_and_material_respect_preference(self):
+        """Light-theme dialogs and their material use the Aqua appearance and tint."""
         import objc
         import AppKit
         from clipx.ui.templates.window import SystemDialog
@@ -211,6 +229,7 @@ class MacOSNativeTests(unittest.TestCase):
             dialog.deleteLater()
 
     def test_brand_icon_and_dock_follow_visible_settings_dialogs(self):
+        """A visible settings dialog switches the app to Regular and restores Accessory."""
         import AppKit
         from PyQt6.QtWidgets import QApplication
         from clipx.ui.templates.window import SystemDialog

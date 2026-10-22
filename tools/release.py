@@ -1,4 +1,10 @@
-"""Build, smoke-test and package the current OS; never cross-compile a macOS app."""
+"""Build, smoke-test and package release artifacts for the current OS.
+
+The script freezes the application with PyInstaller and produces a Debian
+package on Linux or a disk image on macOS. Artifacts are smoke-tested before and
+after packaging. A macOS app is never cross-compiled: each target must run on its
+native system.
+"""
 import argparse
 import hashlib
 import json
@@ -17,16 +23,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def project_version():
+    """Read the project version from ``pyproject.toml``.
+
+    Returns:
+        str: The ``project.version`` value declared at the repository root.
+    """
     return tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['version']
 
 
 def validate_tag(tag):
+    """Check that a release tag matches the version in ``pyproject.toml``.
+
+    Args:
+        tag (str): Candidate release tag such as ``v1.2.3``; an empty value is accepted.
+
+    Raises:
+        ValueError: If ``tag`` is non-empty and differs from ``v<project version>``.
+    """
     expected = 'v' + project_version()
     if tag and tag != expected:
         raise ValueError(f'A tag {tag!r} precisa coincidir com {expected!r} do pyproject.toml.')
 
 
 def architecture():
+    """Map the host machine name to a release architecture.
+
+    Returns:
+        str: Either ``amd64`` or ``arm64``.
+
+    Raises:
+        ValueError: If the host architecture is not supported.
+    """
     machine = platform.machine().lower()
     names = {'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}
     if machine not in names:
@@ -35,12 +62,41 @@ def architecture():
 
 
 def run(command, **kwargs):
+    """Run a command from the repository root, logging only its executable name.
+
+    Arguments are deliberately not logged because signing and notarization
+    commands may contain credentials.
+
+    Args:
+        command (Sequence[object]): Command and arguments; every item is converted to ``str``.
+        **kwargs: Extra keyword arguments forwarded to :func:`subprocess.run`.
+
+    Returns:
+        subprocess.CompletedProcess: The finished process.
+
+    Raises:
+        subprocess.CalledProcessError: If the command exits with a non-zero status.
+    """
     # Do not log command arguments: signing/notarization commands may contain credentials.
     print('Executando:', Path(str(command[0])).name, flush=True)
     return subprocess.run(list(map(str, command)), cwd=ROOT, check=True, **kwargs)
 
 
 def retry_run(command, attempts=3, delay=15, **kwargs):
+    """Run a command, retrying sporadically failing image operations.
+
+    Args:
+        command (Sequence[object]): Command and arguments forwarded to :func:`run`.
+        attempts (int): Maximum number of attempts. Defaults to 3.
+        delay (int): Seconds to wait between attempts. Defaults to 15.
+        **kwargs: Extra keyword arguments forwarded to :func:`run`.
+
+    Returns:
+        subprocess.CompletedProcess: Result of the successful attempt.
+
+    Raises:
+        subprocess.CalledProcessError: If the last attempt fails.
+    """
     # Managed macOS runners sporadically fail hdiutil with "Resource busy"
     # while diskimagesd/Spotlight hold resources; a retry usually succeeds.
     for attempt in range(attempts):
@@ -54,12 +110,43 @@ def retry_run(command, attempts=3, delay=15, **kwargs):
 
 
 def smoke(binary):
+    """Exercise a frozen binary offscreen.
+
+    Runs ``--version`` and then ``_self-test`` with ``QT_QPA_PLATFORM`` set to
+    ``offscreen``.
+
+    Args:
+        binary (Path | str): Executable to launch.
+
+    Raises:
+        subprocess.CalledProcessError: If either command exits with a non-zero status.
+        subprocess.TimeoutExpired: If a command exceeds its timeout.
+    """
     environment = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen'}
     run([binary, '--version'], env=environment, timeout=30)
     run([binary, '_self-test'], env=environment, timeout=90)
 
 
 def freeze(work, macos):
+    """Freeze the application with PyInstaller and smoke-test the result.
+
+    On macOS this also renders the icon sizes with ``sips``, builds an ``.icns``
+    with ``iconutil``, and exports ``CLIPX_ICNS`` plus a default
+    ``MACOSX_DEPLOYMENT_TARGET`` for the build.
+
+    Args:
+        work (Path): Temporary build directory that receives the iconset, the
+            PyInstaller work tree and the frozen output.
+        macos (bool): Whether to build a ``ClipX.app`` bundle instead of a
+            Linux directory.
+
+    Returns:
+        Path: The ``frozen`` output directory produced by PyInstaller.
+
+    Raises:
+        subprocess.CalledProcessError: If an icon or PyInstaller command fails.
+        subprocess.TimeoutExpired: If the smoke test times out.
+    """
     output = work / 'frozen'
     environment = {**os.environ, 'CLIPX_VERSION': project_version()}
     if macos:
@@ -82,6 +169,16 @@ def freeze(work, macos):
 
 
 def checksums(artifacts, output, suffix):
+    """Write SHA-256 checksums for packaged artifacts.
+
+    Args:
+        artifacts (Iterable[Path]): Files to hash.
+        output (Path): Directory that receives the checksum file.
+        suffix (str): Platform suffix used in the ``SHA256SUMS-<suffix>.txt`` name.
+
+    Returns:
+        Path: The written checksum file.
+    """
     path = output / f'SHA256SUMS-{suffix}.txt'
     entries = []
     for file in artifacts:
@@ -93,6 +190,26 @@ def checksums(artifacts, output, suffix):
 
 
 def linux_package(frozen, work, output):
+    """Assemble and validate a Debian package for the frozen application.
+
+    Copies the frozen tree and packaging assets into a staging directory, exports
+    the icon, writes ``DEBIAN/control``, builds the ``.deb`` with ``dpkg-deb``,
+    then extracts it and smoke-tests the extracted binary.
+
+    Args:
+        frozen (Path): Frozen output directory from :func:`freeze`.
+        work (Path): Temporary directory used for staging and extraction.
+        output (Path): Directory that receives the ``.deb`` and checksum file.
+
+    Returns:
+        Path: Path to the built ``.deb`` artifact.
+
+    Raises:
+        RuntimeError: If the Linux icon cannot be exported.
+        ValueError: If ``DEB_MAINTAINER`` contains a line break.
+        subprocess.CalledProcessError: If a ``dpkg-deb`` command fails.
+        subprocess.TimeoutExpired: If the smoke test times out.
+    """
     arch = architecture()
     version = project_version()
     stage = work / 'deb'
@@ -145,6 +262,20 @@ Description: Histórico local da área de transferência
 
 
 def notarize(app):
+    """Submit an app or disk image to Apple's notary service and staple the ticket.
+
+    Reads credentials from the ``MACOS_SIGNING_IDENTITY``, ``APPLE_ID``,
+    ``APPLE_TEAM_ID`` and ``APPLE_APP_PASSWORD`` environment variables. Directories
+    are zipped into a temporary archive; ``.dmg`` files are submitted as-is.
+
+    Args:
+        app (Path): Application bundle or ``.dmg`` file to notarize.
+
+    Raises:
+        ValueError: If the signing identity or any Apple credential is missing.
+        RuntimeError: If the notary service does not accept the submission.
+        subprocess.CalledProcessError: If ``ditto``, ``notarytool`` or ``stapler`` fails.
+    """
     identity = os.environ.get('MACOS_SIGNING_IDENTITY')
     credentials = [os.environ.get(key) for key in ('APPLE_ID', 'APPLE_TEAM_ID', 'APPLE_APP_PASSWORD')]
     if not identity:
@@ -168,6 +299,23 @@ def notarize(app):
 
 
 def macos_package(frozen, work, output, notarized):
+    """Build, optionally notarize and verify a macOS disk image.
+
+    Args:
+        frozen (Path): Frozen output directory from :func:`freeze`.
+        work (Path): Temporary directory for the DMG staging area and mount point.
+        output (Path): Directory that receives the ``.dmg`` and checksum file.
+        notarized (bool): Whether to notarize the app and the final disk image.
+
+    Returns:
+        Path: Path to the built ``.dmg`` artifact.
+
+    Raises:
+        RuntimeError: If notarization is rejected.
+        ValueError: If notarization credentials are missing.
+        subprocess.CalledProcessError: If a signing, imaging or smoke-test command fails.
+        subprocess.TimeoutExpired: If the mounted-app smoke test times out.
+    """
     app = frozen / 'ClipX.app'
     run(['codesign', '--verify', '--deep', '--strict', app])
     if notarized:
@@ -201,6 +349,17 @@ def macos_package(frozen, work, output, notarized):
 
 
 def main():
+    """Parse arguments and build the requested release artifact.
+
+    Supports the ``test`` (unit test suite), ``linux`` and ``macos`` targets.
+    Builds must run on the matching native system, and ``RELEASE_TAG`` must agree
+    with the project version when it is set.
+
+    Raises:
+        SystemExit: On invalid arguments or when a target runs on the wrong platform.
+        ValueError: If the release tag or version format is invalid.
+        subprocess.CalledProcessError: If a build or test command fails.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', choices=('linux', 'macos', 'test'))
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')

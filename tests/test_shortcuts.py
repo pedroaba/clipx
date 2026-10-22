@@ -1,3 +1,4 @@
+"""Shortcut recording, validation, persistence and GNOME binding transfer."""
 import os
 from pathlib import Path
 import tempfile
@@ -25,12 +26,16 @@ from clipx.ui.molecules.shortcut_recorder import display_shortcut
 
 
 class ShortcutTests(unittest.TestCase):
+    """Exercise the shortcuts dialog, conversion helpers and Linux backend."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        """Build isolated settings, storage, window, fake backend and dialog."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.settings = ShortcutSettings(Path(self.temp.name) / "settings.json")
@@ -51,6 +56,14 @@ class ShortcutTests(unittest.TestCase):
         self.addCleanup(self.dialog.close)
 
     def click_to_record(self, name):
+        """Click the recorder for ``name`` and return it once recording has started.
+
+        Args:
+            name: Shortcut identifier whose recorder should capture the next chord.
+
+        Returns:
+            The recorder widget that is now waiting for input.
+        """
         self.dialog.show()
         self.app.processEvents()
         recorder = self.dialog.recorders[name]
@@ -61,6 +74,7 @@ class ShortcutTests(unittest.TestCase):
         return recorder
 
     def test_mouse_click_and_real_key_events_record_a_global_shortcut(self):
+        """A real key chord is recorded without saving until Apply is clicked."""
         recorder = self.click_to_record("global")
         self.backend.pause.assert_called_once()
         QTest.keyPress(recorder, Qt.Key.Key_Control)
@@ -78,6 +92,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(self.dialog.result(), QDialog.DialogCode.Accepted)
 
     def test_mouse_click_records_internal_binding_without_triggering_search_actions(self):
+        """Recording an internal shortcut does not fire the window action bound to that chord."""
         recorder = self.click_to_record("pin")
         with patch.object(self.window, "_action_toggle_pin") as pin:
             QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_L, Qt.KeyboardModifier.ControlModifier)
@@ -87,6 +102,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(self.window.shortcuts["pin"], "Ctrl+P")
 
     def test_escape_cancels_only_recording_and_restores_previous_binding(self):
+        """Escape ends recording, restores the binding and keeps the dialog open."""
         recorder = self.click_to_record("global")
         QTest.keyClick(self.app.focusWidget(), Qt.Key.Key_Escape)
         self.assertFalse(recorder.recording)
@@ -96,6 +112,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse(self.settings.path.exists())
 
     def test_conflicting_recording_keeps_old_draft_and_shows_inline_error(self):
+        """A chord that conflicts with a system action is rejected with an inline message."""
         self.backend.conflicts.return_value = ["switch-applications"]
         recorder = self.click_to_record("global")
         QTest.keyClick(recorder, Qt.Key.Key_Tab, Qt.KeyboardModifier.AltModifier)
@@ -107,6 +124,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.resume.assert_called_once_with("<Super>v")
 
     def test_deactivation_and_timeout_both_end_recording(self):
+        """Both window deactivation and the recording timeout stop capture and resume globals."""
         from PyQt6.QtCore import QEvent
 
         recorder = self.click_to_record("global")
@@ -119,6 +137,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(self.backend.resume.call_count, 2)
 
     def test_failed_resume_keeps_dialog_open_for_retry(self):
+        """A resume failure keeps the dialog open for retry; a later success closes it."""
         self.click_to_record("global")
         self.backend.resume.side_effect = RuntimeError("GNOME unavailable")
         self.dialog.reject()
@@ -130,6 +149,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse(self.dialog.isVisible())
 
     def test_conversion_and_duplicate_validation(self):
+        """GNOME conversion round-trips while invalid or duplicate chords raise."""
         for value in ("Meta+V", "Ctrl+Shift+F8", "Alt+Space", "Ctrl++", ""):
             self.assertEqual(from_gnome(to_gnome(value)), normalize(value) if value else "")
         self.assertEqual(from_gnome("<Primary>v"), "Ctrl+V")
@@ -144,6 +164,7 @@ class ShortcutTests(unittest.TestCase):
             to_gnome("Shift+V")
 
     def test_save_applies_immediately_and_persists_for_next_window(self):
+        """Saving applies internal shortcuts live and the next window loads them."""
         self.storage.add_clip("test clip")
         self.window.load_clips()
         self.dialog.editors["pin"].setKeySequence(QKeySequence("Ctrl+L"))
@@ -166,6 +187,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.write.assert_not_called()
 
     def test_global_conflict_is_reported_without_saving(self):
+        """A conflicting global chord is reported and nothing is written or persisted."""
         self.dialog.global_edit.setKeySequence(QKeySequence("Alt+Tab"))
         self.backend.conflicts.return_value = ["switch-applications"]
         self.dialog.controller.save()
@@ -174,6 +196,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertIn("switch-applications", self.dialog.error_label.text())
 
     def choose_super_space(self):
+        """Pick Super+Space in the modal shortcut picker via modifier buttons and key list."""
         from PyQt6.QtCore import QTimer
         from clipx.ui.pages.shortcut_picker import ShortcutPicker
 
@@ -181,6 +204,7 @@ class ShortcutTests(unittest.TestCase):
         self.app.processEvents()
 
         def choose():
+            """Drive the open picker: check Super, select Space and accept the sequence."""
             picker = self.app.activeModalWidget()
             self.assertIsInstance(picker, ShortcutPicker)
             picker.modifiers["Super"].setChecked(True)
@@ -191,6 +215,7 @@ class ShortcutTests(unittest.TestCase):
         QTest.mouseClick(self.dialog.choose_button, Qt.MouseButton.LeftButton)
 
     def test_super_space_can_be_chosen_without_pressing_the_intercepted_chord(self):
+        """Super+Space is selectable without pressing it, and declining leaves the system alone."""
         self.backend.conflicts.return_value = ["switch-input-source"]
         self.choose_super_space()
         self.assertEqual(self.dialog.global_edit.keySequence().toString(), "Meta+Space")
@@ -202,6 +227,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse(self.settings.path.exists())
 
     def test_picker_shows_live_preview_and_modifier_buttons(self):
+        """The picker previews modifier combinations live and validates the final selection."""
         from clipx.ui.pages.shortcut_picker import ShortcutPicker
         from PyQt6.QtWidgets import QPushButton
 
@@ -222,6 +248,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(picker.selected_sequence, "Alt+Space")
 
     def test_super_space_is_recorded_when_the_desktop_delivers_the_key_event(self):
+        """A delivered Meta+Space event is captured and converts to the GNOME Super binding."""
         recorder = self.click_to_record("global")
         QTest.keyClick(recorder, Qt.Key.Key_Space, Qt.KeyboardModifier.MetaModifier)
         self.assertEqual(recorder.keySequence().toString(), "Meta+Space")
@@ -229,6 +256,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(to_gnome(recorder.keySequence().toString()), "<Super>space")
 
     def test_reassignment_confirmation_names_the_action_and_requires_the_use_button(self):
+        """The confirmation names the conflicting action and only the use button accepts."""
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QMessageBox
 
@@ -236,6 +264,11 @@ class ShortcutTests(unittest.TestCase):
         self.app.processEvents()
         for button_text, expected in (("Voltar", False), ("Usar no ClipX", True)):
             def respond(text=button_text):
+                """Click the reassignment dialog button carrying ``text``.
+
+                Args:
+                    text (str): Label of the button to click.
+                """
                 box = self.app.activeModalWidget()
                 self.assertIsInstance(box, QMessageBox)
                 self.assertIn("Trocar idioma do teclado", box.text())
@@ -249,6 +282,7 @@ class ShortcutTests(unittest.TestCase):
             self.assertEqual(result, expected)
 
     def test_super_space_transfer_requires_confirmation_and_can_be_applied(self):
+        """A confirmed conflict transfer reassigns the system binding and accepts the dialog."""
         self.backend.conflicts.return_value = ["switch-input-source"]
         conflicts = [{"name": "switch-input-source"}]
         self.backend.conflict_bindings.return_value = conflicts
@@ -261,6 +295,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(self.dialog.result(), QDialog.DialogCode.Accepted)
 
     def test_failed_local_save_rolls_back_transferred_system_bindings(self):
+        """A local save failure restores the global binding and the transferred conflicts."""
         self.backend.conflicts.return_value = ["switch-input-source"]
         self.backend.conflict_bindings.return_value = [{"name": "switch-input-source"}]
         changes = [{"name": "switch-input-source", "value": ["<Super>space", "XF86Keyboard"]}]
@@ -273,6 +308,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.restore_conflicts.assert_called_once_with(changes)
 
     def test_backend_transfer_preserves_other_bindings_and_rolls_back_on_failure(self):
+        """Transferring a conflict edits only the named key and restores state on failure."""
         import ast
 
         backend = GlobalShortcut(recovery_path=Path(self.temp.name) / "recording.json")
@@ -289,6 +325,14 @@ class ShortcutTests(unittest.TestCase):
         backend.write = Mock(side_effect=lambda binding: state.update({("clipx", "binding"): binding}))
 
         def write_system(operation, schema, key, value):
+            """Record a ``gsettings set`` invocation in the simulated state.
+
+            Args:
+                operation (str): gsettings operation, asserted to be ``'set'``.
+                schema (str): Schema receiving the value.
+                key (str): Key receiving the value.
+                value (str): Serialized value, parsed with ``ast.literal_eval``.
+            """
             self.assertEqual(operation, "set")
             state[(schema, key)] = ast.literal_eval(value)
 
@@ -306,6 +350,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(state[("clipx", "binding")], "<Super>v")
 
     def test_transfer_refuses_conflicts_that_changed_after_confirmation(self):
+        """A conflict set that changed after confirmation aborts before running gsettings."""
         backend = GlobalShortcut()
         backend.conflict_bindings = Mock(return_value=[])
         backend.run = Mock()
@@ -314,6 +359,7 @@ class ShortcutTests(unittest.TestCase):
         backend.run.assert_not_called()
 
     def test_global_change_and_disable(self):
+        """Changing the global chord writes the GNOME form and clearing writes an empty value."""
         self.dialog.global_edit.setKeySequence(QKeySequence("Meta+Alt+V"))
         self.dialog.controller.save()
         self.backend.write.assert_called_once_with("<Alt><Super>v")
@@ -324,6 +370,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.write.assert_called_with("")
 
     def test_equivalent_global_modifier_order_does_not_rewrite_binding(self):
+        """A different modifier order for the same chord does not rewrite the binding."""
         self.backend.read.return_value = "<Super><Alt>v"
         dialog = ShortcutsDialog(self.window, self.backend)
         self.addCleanup(dialog.deleteLater)
@@ -331,6 +378,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.write.assert_not_called()
 
     def test_failed_local_save_restores_global_binding(self):
+        """When settings cannot be saved, the previous global binding is written back."""
         self.dialog.global_edit.setKeySequence(QKeySequence("Ctrl+Alt+F8"))
         with patch.object(self.settings, "save", side_effect=OSError("save failed")):
             self.dialog.controller.save()
@@ -339,6 +387,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertEqual(self.window.shortcuts, DEFAULT_SHORTCUTS)
 
     def test_unavailable_global_backend_still_allows_internal_shortcuts(self):
+        """An unavailable global backend disables its editor but internal shortcuts still save."""
         self.backend.read.side_effect = RuntimeError("unavailable")
         dialog = ShortcutsDialog(self.window, self.backend)
         self.addCleanup(dialog.deleteLater)
@@ -349,6 +398,7 @@ class ShortcutTests(unittest.TestCase):
         self.backend.write.assert_not_called()
 
     def test_typing_and_default_tab_navigation_still_work(self):
+        """Typing searches normally and Tab keys cycle filters, while Escape hides the window."""
         self.window.show()
         self.app.processEvents()
         field = self.window.search_bar.input_field
@@ -363,12 +413,14 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse(self.window.isVisible())
 
     def test_corrupted_settings_fall_back_and_disabled_keys_survive(self):
+        """Corrupted settings load defaults, while an intentionally empty shortcut survives."""
         self.settings.path.write_text('{"shortcuts": []}')
         self.assertEqual(self.settings.load(), DEFAULT_SHORTCUTS)
         self.settings.save({**DEFAULT_SHORTCUTS, "pin": ""})
         self.assertEqual(self.settings.load()["pin"], "")
 
     def test_gnome_write_preserves_other_shortcuts_and_updates_only_own_binding(self):
+        """The GNOME writer updates only ClipX's custom keybinding entry."""
         backend = GlobalShortcut()
         backend.get = Mock(side_effect=[["/another/", backend.PATH], "<Super><Alt>v"])
         backend.run = Mock()
@@ -377,6 +429,7 @@ class ShortcutTests(unittest.TestCase):
                                             "binding", repr("<Super><Alt>v"))
 
     def test_gnome_checks_system_and_custom_conflicts(self):
+        """Conflict detection reports both system bindings and other custom shortcuts."""
         backend = GlobalShortcut()
         backend.run = Mock(return_value="org.gnome.shell.keybindings toggle-message-tray ['<Super>v']")
         backend.get = Mock(side_effect=[[backend.PATH, "/another/"], "<Super>v", "Other app"])
@@ -385,6 +438,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertIn("Other app", matches)
 
     def test_installer_preserves_registered_binding_and_sets_default_only_once(self):
+        """The installer keeps an existing ClipX binding and only writes a missing default."""
         installer = (Path(__file__).resolve().parents[1] / "install_shortcut.sh").read_text()
         shortcut_section = installer.split("# 3.", 1)[1].split("\n", 1)[1]
         # Run only the shortcut section, with gsettings replaced by a recording function.
@@ -412,6 +466,7 @@ USER_BIN=/tmp/clipx-test-launcher
                 self.assertIn("<Super>v", binding_writes[0])
 
     def test_pause_resume_and_crash_recovery_preserve_the_global_binding(self):
+        """Pause/resume and crash recovery restore the binding unless an external change wins."""
         path = Path(self.temp.name) / "recording.json"
         backend = GlobalShortcut(recovery_path=path)
         state = {"binding": "<Super>v"}

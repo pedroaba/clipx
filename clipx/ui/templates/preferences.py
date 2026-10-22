@@ -4,7 +4,26 @@ from clipx.ui.atoms.feedback import FeedbackLabel
 
 
 class PreferencesLayout(QWidget):
+    """Two-column preferences shell with a fixed sidebar and scrolling body.
+
+    The right column contains a title and description, the supplied search
+    control, a scrollable content area, an inline error label, a hint, and the
+    supplied footer actions. The sidebar is placed directly in the root layout
+    and is not scrolled.
+    """
+
     def __init__(self, sidebar, search, content, footer, hint, parent=None):
+        """Assemble the preferences shell from externally created widgets.
+
+        Args:
+            sidebar (QWidget): Navigation widget shown in the left column.
+            search (QWidget): Search control embedded in the header.
+            content (QWidget): Page content placed inside the scroll area.
+            footer (QWidget): Action widget placed at the bottom of the right
+                column.
+            hint (str): Help text shown above the footer.
+            parent (QWidget, optional): Parent widget that owns the layout.
+        """
         super().__init__(parent)
         self.setObjectName('PreferencesLayout')
         root = QHBoxLayout(self)

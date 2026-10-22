@@ -1,4 +1,10 @@
-"""Fixture-only preferences previews; never touches the global clipboard or shortcuts."""
+"""Fixture-only preferences previews; never touches the global clipboard or shortcuts.
+
+Builds an offscreen (or, with ``--native``, host desktop) Qt application with a
+temporary history database and settings file, then saves screenshots of each
+preferences section in dark and light themes, plus scaled clipboard previews, to
+the ``artifacts`` directory. Everything is torn down when the script exits.
+"""
 import os
 import sys
 from pathlib import Path

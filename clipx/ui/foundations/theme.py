@@ -1,4 +1,9 @@
-"""ClipX semantic dark tokens, shared across all Qt surfaces."""
+"""ClipX semantic dark tokens, shared across all Qt surfaces.
+
+Defines the color, radius and motion constants used by the dark theme and the
+base Qt style sheet built from them. Widgets and preference dialogs extend
+``QSS_STYLESHEET`` rather than duplicating these values.
+"""
 BG_WINDOW = '#18181B'
 BG_CARD = '#242428'
 BG_CARD_HOVER = '#29292E'

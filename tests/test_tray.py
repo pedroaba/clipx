@@ -1,3 +1,4 @@
+"""Tray menu, instance routing and activation-token behavior."""
 import os
 from pathlib import Path
 import tempfile
@@ -22,12 +23,16 @@ from clipx.utils import format_relative_time
 
 
 class TrayTests(unittest.TestCase):
+    """Exercise tray menus, single-instance routing and foreground activation."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        """Build isolated storage, window and tray fixtures."""
         self.temp = tempfile.TemporaryDirectory(dir="/tmp")
         self.addCleanup(self.temp.cleanup)
         self.storage = Storage(Path(self.temp.name) / "history.db")
@@ -38,6 +43,7 @@ class TrayTests(unittest.TestCase):
         self.addCleanup(self.tray.refresh_timer.stop)
 
     def populate(self):
+        """Store seven clips with increasing timestamps, pin one and refresh the menu."""
         for n in range(7):
             clip_id = self.storage.add_clip(f"clip {n}")
             with self.storage._get_connection() as conn:
@@ -49,11 +55,18 @@ class TrayTests(unittest.TestCase):
         self.tray.refresh_menu()
 
     def wait_for(self, condition, timeout_ms=5000):
-        """Processa eventos Qt até condition() ser atendida ou falha com contexto.
+        """Process Qt events until the condition holds or the timeout expires.
 
-        A entrega de sinais do QLocalServer depende do event loop e não tem
-        prazo determinístico; em runners lentos, uma janela fixa curta (ex.:
-        50 ms) termina antes do servidor despachar readyRead/newConnection.
+        QLocalServer signal delivery depends on the event loop and has no deterministic
+        deadline; on slow runners a short fixed wait may end before the server dispatches
+        readyRead/newConnection.
+
+        Args:
+            condition: Callable returning truthy once the awaited state is reached.
+            timeout_ms: Maximum time to wait, in milliseconds.
+
+        Raises:
+            AssertionError: If the condition is still false after the timeout.
         """
         deadline = time.monotonic() + timeout_ms / 1000
         while not condition():
@@ -62,6 +75,7 @@ class TrayTests(unittest.TestCase):
             QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
 
     def test_recent_five_ignore_pin_priority_and_refresh(self):
+        """The menu lists the five most recent clips, refreshes and shows an empty state."""
         self.populate()
         self.assertEqual(
             [a.text() for a in self.tray.menu.actions() if not a.isSeparator() and a.isVisible()],
@@ -79,6 +93,7 @@ class TrayTests(unittest.TestCase):
         self.assertFalse(empty.isEnabled())
 
     def test_preview_copies_full_content_and_updates_recency(self):
+        """Menu labels escape and truncate previews while triggering copies the full text."""
         content = "a & b\n" + "long text " * 20
         self.storage.add_clip(content)
         self.tray.refresh_menu()
@@ -93,6 +108,7 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(self.tray.clip_actions[0].data().content, content)
 
     def test_open_close_reopen_and_quit(self):
+        """Open shows the search, closing keeps the app alive, and quit emits aboutToQuit."""
         self.tray.open_action.trigger()
         self.assertTrue(self.window.isVisible())
         self.window.close()
@@ -114,6 +130,7 @@ class TrayTests(unittest.TestCase):
             self.app.aboutToQuit.disconnect(callback)
 
     def test_menu_keeps_actions_and_click_targets_stable_while_open(self):
+        """An open menu keeps its actions and targets fixed until it is hidden."""
         self.populate()
         actions = self.tray.menu.actions()
         self.tray._about_to_show()
@@ -126,6 +143,7 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(self.tray.menu.actions(), actions)
 
     def test_shortcuts_menu_opens_one_dialog_and_cancel_does_not_save(self):
+        """The shortcuts action reuses one dialog and cancelling persists no binding."""
         with patch("clipx.ui.pages.shortcuts.GlobalShortcut") as backend:
             from clipx.platforms.linux.shortcuts import from_gnome, to_gnome
             backend.return_value.read.return_value = "<Super>v"
@@ -147,6 +165,7 @@ class TrayTests(unittest.TestCase):
             self.assertFalse(self.window.shortcut_settings.path.exists())
 
     def test_instance_routes_show_and_releases_lock(self):
+        """A secondary instance forwards show to the primary and can acquire after release."""
         with patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.temp.name}):
             instance = DesktopInstance(runtime=self.temp.name)
             self.assertTrue(instance.acquire())
@@ -168,6 +187,7 @@ class TrayTests(unittest.TestCase):
             secondary.close()
 
     def test_shortcut_process_forwards_its_activation_token_to_the_tray(self):
+        """A secondary launch forwards its activation token to the primary listener."""
         with patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.temp.name}):
             primary = DesktopInstance(runtime=self.temp.name)
             self.assertTrue(primary.acquire())
@@ -180,6 +200,7 @@ class TrayTests(unittest.TestCase):
             self.assertEqual(received, ["gnome-token"])
 
     def test_foreground_request_uses_the_token_for_the_correct_window(self):
+        """Bringing a window forward consumes the token and activates only visible windows."""
         for was_visible in (False, True):
             window = Mock()
             window.isVisible.return_value = was_visible
@@ -197,6 +218,7 @@ class TrayTests(unittest.TestCase):
         self.assertTrue(self.window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
 
     def test_relative_time_accepts_fractional_timestamps(self):
+        """A fractional-second UTC timestamp is recognized as the current time."""
         from datetime import datetime, timezone
 
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")

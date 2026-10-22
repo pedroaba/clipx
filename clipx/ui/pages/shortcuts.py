@@ -1,4 +1,9 @@
-"""Shortcut preferences page: composition and dialog lifecycle only."""
+"""Shortcut preferences page: composition and dialog lifecycle only.
+
+The dialog composes the sidebar, search field, sections and footer into the
+preferences layout, wires the controller for recording and transactions, and
+provides the global-shortcut picker and conflict confirmation flows.
+"""
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QMessageBox
@@ -17,7 +22,39 @@ from clipx.ui.foundations.preferences import PREFERENCES_QSS
 
 
 class ShortcutsDialog(SystemDialog):
+    """Dialog that composes the shortcut preferences UI and its controller.
+
+    Attributes:
+        window (ClipXMainWindow): Window that owns the shortcut settings.
+        backend (object): Global-shortcut backend used to read, write and pause
+            bindings.
+        sidebar (ShortcutSidebar): Category navigation.
+        search_field (ShortcutSearch): Shortcut search input.
+        sections (ShortcutSections): Grouped shortcut rows.
+        rows (dict[str, ShortcutRow]): Rows indexed by shortcut name.
+        recorders (dict[str, ShortcutRecorder]): Recorders indexed by name.
+        editors (dict[str, ShortcutRecorder]): Search shortcut recorders only.
+        messages (dict[str, QLabel]): Status labels indexed by shortcut name.
+        clear_buttons (dict[str, QPushButton]): Clear buttons indexed by name.
+        global_edit (ShortcutRecorder): Recorder for the global shortcut.
+        choose_button (QPushButton): Button that opens the global picker.
+        footer (PreferencesFooter): Footer with reset and apply/cancel.
+        buttons (DialogActions): Apply and cancel button pair.
+        apply_button (QPushButton): Alias of the footer apply button.
+        surface (PreferencesLayout): Composed layout inside the dialog.
+        error_label (QLabel): Error label used by the controller.
+        controller (ShortcutsController): Coordinator for recording and saving.
+        find_shortcut (QShortcut): Shortcut that focuses the search field.
+    """
+
     def __init__(self, window, backend=None):
+        """Compose the UI and start the controller.
+
+        Args:
+            window (ClipXMainWindow): Window that owns the shortcut settings.
+            backend (object | None): Global-shortcut backend; a default
+                ``GlobalShortcut`` is created when omitted.
+        """
         super().__init__()
         self.window = window
         self.backend = backend or GlobalShortcut()
@@ -54,16 +91,33 @@ class ShortcutsDialog(SystemDialog):
                       area.y() + max(0, (area.height() - self.height()) // 2))
 
     def focus_search(self):
+        """Focus and select the search field, unless a shortcut is recording."""
         if self.controller.recording_name is None:
             self.search_field.input.setFocus()
             self.search_field.input.selectAll()
 
     def event(self, event):
+        """Stop recording when the dialog loses focus.
+
+        Args:
+            event (QEvent): Event being processed.
+
+        Returns:
+            bool: Result of the base class handler.
+        """
         if event.type() == QEvent.Type.WindowDeactivate and hasattr(self, 'controller'):
             self.controller.stop_recording()
         return super().event(event)
 
     def done(self, result):
+        """Close the dialog, stopping recording and detaching the controller.
+
+        A paused global binding aborts the close so the active recording can
+        finish cleanly.
+
+        Args:
+            result (int): Dialog result code.
+        """
         self.controller.stop_recording()
         if self.controller.paused_binding is not None:
             return
@@ -71,6 +125,13 @@ class ShortcutsDialog(SystemDialog):
         super().done(result)
 
     def pick_global_sequence(self):
+        """Open the global shortcut picker and return the selected sequence.
+
+        The picker is themed with the window preferences and deleted after use.
+
+        Returns:
+            str | None: Normalized portable sequence, or ``None`` if canceled.
+        """
         picker = ShortcutPicker(self.global_edit.keySequence(), self)
         from clipx.ui.foundations.appearance import apply_surface
         apply_surface(picker, self.window.preferences, picker.styleSheet())
@@ -80,6 +141,19 @@ class ShortcutsDialog(SystemDialog):
         return sequence
 
     def confirm_reassignment(self, sequence, conflicts):
+        """Ask the user whether to transfer a system shortcut to ClipX.
+
+        Only the chosen combination is removed from the listed apps; other
+        bindings in those apps remain unchanged.
+
+        Args:
+            sequence (str): Portable key sequence to assign to ClipX.
+            conflicts (list[dict]): Conflicting bindings reported by the backend,
+                each with a ``name``.
+
+        Returns:
+            bool: ``True`` when the user chose to use the combination in ClipX.
+        """
         names = [CONFLICT_NAMES.get(item["name"], item["name"]) for item in conflicts]
         question = QMessageBox(self)
         question.setWindowTitle("Usar " + display_shortcut(sequence) + " no ClipX?")

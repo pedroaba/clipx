@@ -1,3 +1,9 @@
+"""Command-line entry points for the ClipX GUI and clipboard daemon.
+
+The CLI exposes the desktop overlay (``gui``/``show``), tray mode, the standalone
+clipboard daemon, and lightweight history commands (``add`` and ``clear``).
+"""
+
 import argparse
 import os
 import signal
@@ -13,6 +19,20 @@ from clipx.storage import Storage
 
 
 def run_gui(start_hidden=False):
+    """Run the Qt desktop application, tray, and background capture daemon.
+
+    The function resolves the platform backend, acquires the single-instance
+    lock, builds the main window and tray, and then hands control to the Qt
+    event loop. Shutdown hooks stop the daemon, shortcuts, desktop backend, and
+    window effects when the application quits.
+
+    Args:
+        start_hidden (bool): If True, start in the tray without opening search.
+
+    Raises:
+        RuntimeError: If running on macOS older than version 14.
+        SystemExit: With the exit code returned by the Qt event loop.
+    """
     # Save it before QApplication initializes the platform plugin in this process.
     from clipx.platforms import get_platform
     platform = get_platform()
@@ -85,6 +105,16 @@ def run_gui(start_hidden=False):
 
 
 def main():
+    """Parse command-line arguments and dispatch to the requested command.
+
+    With no subcommand, the GUI overlay is opened. ``tray`` starts hidden,
+    ``daemon`` runs the standalone clipboard listener, ``add`` stores text in
+    history, and ``clear`` deletes history items.
+
+    Raises:
+        SystemExit: If argument parsing fails, the platform is unsupported, or
+            the invoked command exits the process.
+    """
     parser = argparse.ArgumentParser(
         description="ClipX - A modern Raycast-styled clipboard history manager for Linux and macOS"
     )

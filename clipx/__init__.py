@@ -1,4 +1,10 @@
-"""ClipX - A modern, Raycast-styled clipboard history manager for Linux and macOS."""
+"""ClipX package and version metadata.
+
+ClipX is a clipboard history manager for Linux and macOS. Importing this package
+normalizes the Qt platform theme on Linux and resolves ``__version__`` from the
+installed distribution, falling back to ``"0+uninstalled"`` when distribution
+metadata is unavailable.
+"""
 
 import os
 import sys

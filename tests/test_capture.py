@@ -1,3 +1,4 @@
+"""Clipboard capture, Linux listener selection and X11 integration behavior."""
 import os
 from pathlib import Path
 import tempfile
@@ -13,12 +14,16 @@ from clipx.storage import Storage
 
 
 class CaptureTests(unittest.TestCase):
+    """Exercise capture deduplication and daemon listener lifecycle."""
+
     def setUp(self):
+        """Create an isolated temporary storage for each test."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.storage = Storage(Path(self.temp.name) / "history.db")
 
     def test_capture_preserves_text_and_deduplicates_notifications(self):
+        """Repeated and empty notifications are skipped while new text is stored verbatim."""
         capture = ClipboardCapture(self.storage)
         with patch.object(self.storage, "add_clip", wraps=self.storage.add_clip) as add:
             capture.save("first\nsecond\n")
@@ -30,6 +35,7 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(self.storage.get_clips()[0].content, "first\nsecond\n")
 
     def test_xwayland_uses_one_listener_and_no_wl_paste(self):
+        """With an X display the daemon starts one X11 watcher and stops when it exits."""
         daemon = ClipboardDaemon(self.storage, driver=LinuxClipboardDriver())
         with patch.dict(os.environ, {"DISPLAY": ":0"}):
             command = daemon.listener_command()
@@ -45,12 +51,14 @@ class CaptureTests(unittest.TestCase):
         self.assertFalse(daemon.running)
 
     def test_wayland_without_x11_uses_only_watch(self):
+        """Without an X display the listener command relies solely on wl-paste --watch."""
         with patch.dict(os.environ, {"DISPLAY": ""}):
             command = ClipboardDaemon(self.storage, driver=LinuxClipboardDriver()).listener_command()
         self.assertEqual(command[:4], ["wl-paste", "--type", "text", "--watch"])
         self.assertIn("clipx.capture", command)
 
     def test_stop_terminates_listener_and_cancels_pending_start(self):
+        """Stopping terminates a running listener and prevents a later run loop from starting."""
         daemon = ClipboardDaemon(self.storage, driver=LinuxClipboardDriver())
         process = Mock()
         process.poll.return_value = None
@@ -64,7 +72,10 @@ class CaptureTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("CLIPX_TEST_X11"), "requires an X11 connection")
 class X11IntegrationTests(unittest.TestCase):
+    """Opt-in checks against a real X server using a private selection."""
+
     def test_event_capture_without_mapping_windows_or_changing_user_clipboard(self):
+        """Capture a private selection without mapping windows or touching CLIPBOARD."""
         from Xlib import X, display, protocol
         from uuid import uuid4
 
@@ -90,6 +101,7 @@ class X11IntegrationTests(unittest.TestCase):
         errors = []
 
         def run_listener():
+            """Run the listener until it stops, capturing any raised exception."""
             try:
                 listener.run(stopped)
             except Exception as exc:

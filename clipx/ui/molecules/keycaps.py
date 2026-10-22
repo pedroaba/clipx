@@ -7,6 +7,20 @@ from clipx.ui.atoms.keycap import Keycap
 
 
 def key_parts(sequence):
+    """Split a key sequence into display labels for its modifiers and key.
+
+    Modifier labels follow the platform: symbols on macOS and names elsewhere.
+    The first combination of the sequence is used; named keys such as Return,
+    Escape, and arrows are replaced with compact symbols. An empty sequence
+    yields no parts.
+
+    Args:
+        sequence (str | QKeySequence): Sequence to render.
+
+    Returns:
+        list[str]: Modifier labels in Control, Alt, Shift, Meta order, followed
+            by the key label.
+    """
     sequence = QKeySequence(sequence)
     if sequence.isEmpty():
         return []
@@ -26,7 +40,19 @@ def key_parts(sequence):
 
 
 class ShortcutKeycaps(QWidget):
+    """Horizontal row of :class:`Keycap` atoms for a keyboard shortcut.
+
+    The widget is transparent to mouse events, sized to its content, and can
+    show either keycaps for a sequence or a plain recorder message.
+    """
+
     def __init__(self, sequence='', parent=None):
+        """Create the keycap row and populate it from ``sequence``.
+
+        Args:
+            sequence (str, optional): Initial key sequence. Defaults to empty.
+            parent (QWidget, optional): Parent widget that owns the row.
+        """
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
@@ -37,6 +63,7 @@ class ShortcutKeycaps(QWidget):
         self.set_sequence(sequence)
 
     def _clear(self):
+        """Hide, detach, and schedule deletion of all child widgets."""
         while self.box.count():
             widget = self.box.takeAt(0).widget()
             if widget:
@@ -45,6 +72,12 @@ class ShortcutKeycaps(QWidget):
         self.caps = []
 
     def set_sequence(self, sequence):
+        """Replace the current contents with keycaps for ``sequence``.
+
+        Args:
+            sequence (str): Key sequence to render; an empty sequence clears
+                the row.
+        """
         self._clear()
         for part in key_parts(sequence):
             cap = Keycap(part)
@@ -52,6 +85,11 @@ class ShortcutKeycaps(QWidget):
             self.box.addWidget(cap)
 
     def set_message(self, text):
+        """Replace the current contents with a single recorder message.
+
+        Args:
+            text (str): Message displayed as a ``RecorderMessage`` label.
+        """
         self._clear()
         label = QLabel(text)
         label.setObjectName('RecorderMessage')

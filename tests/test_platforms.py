@@ -10,7 +10,10 @@ from unittest.mock import Mock, patch
 
 
 class PlatformTests(unittest.TestCase):
+    """Validate platform selection, migration and driver edge cases."""
+
     def test_factory_selects_platform_and_rejects_unsupported(self):
+        """The factory maps linux and darwin and rejects unsupported systems."""
         from clipx.platforms import get_platform
         self.assertEqual(get_platform('linux').name, 'linux')
         self.assertEqual(get_platform('darwin').name, 'macos')
@@ -18,10 +21,12 @@ class PlatformTests(unittest.TestCase):
             get_platform('win32')
 
     def test_importing_linux_does_not_import_appkit(self):
+        """Selecting the Linux platform does not import macOS frameworks."""
         code = "from clipx.platforms import get_platform; get_platform('linux'); import sys; assert 'AppKit' not in sys.modules; assert 'Quartz' not in sys.modules"
         subprocess.run([sys.executable, '-c', code], check=True)
 
     def test_macos_paths_migrate_without_destroying_source_or_overwriting(self):
+        """Legacy data is copied with a backup while an existing config is preserved."""
         from clipx.platforms.paths import PlatformPaths
         from clipx.storage import Storage
         with tempfile.TemporaryDirectory() as folder:
@@ -42,6 +47,7 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual((paths.config / 'settings.json').read_text(), 'new preferences')
 
     def test_macos_poll_only_reads_changes_and_skips_private_or_own_content(self):
+        """Polling reads a change once and ignores concealed, transient or self-marked content."""
         from clipx.platforms.macos.clipboard import MacOSClipboardDriver
         board = Mock()
         board.changeCount.return_value = 1
@@ -61,6 +67,7 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(sink.save.call_count, 1)
 
     def test_macos_poll_discards_read_if_pasteboard_changes_during_read(self):
+        """A change counter that moves during a read discards the stale value."""
         from clipx.platforms.macos.clipboard import MacOSClipboardDriver
         board = Mock()
         board.changeCount.side_effect = [1, 2]
@@ -71,6 +78,7 @@ class PlatformTests(unittest.TestCase):
         sink.save.assert_not_called()
 
     def test_macos_paste_denied_or_missing_target_never_posts_keys(self):
+        """Without permission or a previous target no synthetic key events are posted."""
         from clipx.platforms.macos.desktop import MacOSDesktopDriver
         quartz = Mock()
         quartz.can_paste.return_value = False
@@ -84,6 +92,7 @@ class PlatformTests(unittest.TestCase):
         quartz.CGEventPost.assert_not_called()
 
     def test_macos_shortcut_write_and_pause_preserve_binding(self):
+        """Writing, pausing and resuming keep the binding, and failed writes keep the old one."""
         from clipx.platforms.macos.shortcuts import MacOSGlobalShortcut
         native = Mock()
         native.register.return_value = object()
@@ -103,6 +112,7 @@ class PlatformTests(unittest.TestCase):
             backend.stop()
 
     def test_macos_paste_waits_for_correct_target_and_times_out_without_keys(self):
+        """Paste waits for the target app to come forward and times out without posting keys."""
         from clipx.platforms.macos.desktop import MacOSDesktopDriver
         appkit, quartz, target = Mock(), Mock(), Mock()
         quartz.can_paste.return_value = True
@@ -120,6 +130,7 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(quartz.CGEventPost.call_count, 2)
 
     def test_macos_shortcut_save_failure_unregisters_new_and_keeps_old(self):
+        """A persistence failure unregisters the new hot key and restores the previous handle."""
         from clipx.platforms.macos.shortcuts import MacOSGlobalShortcut
         native = Mock()
         old, new = object(), object()
@@ -137,6 +148,7 @@ class PlatformTests(unittest.TestCase):
             backend.stop()
 
     def test_macos_empty_text_never_adds_history_and_read_errors_surface(self):
+        """An unreadable pasteboard reports permission required and stores nothing."""
         from clipx.platforms.macos.clipboard import MacOSClipboardDriver, TEXT_TYPE
         from clipx.platforms.base import Status
         board = Mock()
@@ -149,6 +161,7 @@ class PlatformTests(unittest.TestCase):
         sink.save.assert_not_called()
 
     def test_linux_worker_selection_and_failures(self):
+        """The Linux driver chooses an X11 or wl-paste worker and reports failed writes."""
         from clipx.platforms.linux.clipboard import LinuxClipboardDriver
         driver = LinuxClipboardDriver()
         with patch.dict(os.environ, {'DISPLAY': ':0'}):
@@ -159,6 +172,7 @@ class PlatformTests(unittest.TestCase):
             self.assertFalse(driver.write_text('failed').ok)
 
     def test_initial_hotkey_conflict_can_be_fixed_in_preferences(self):
+        """A failing default hot key does not block later registration from preferences."""
         from clipx.platforms.macos.shortcuts import MacOSGlobalShortcut
         native = Mock()
         native.register.side_effect = [RuntimeError('default in use'), object()]
@@ -172,6 +186,7 @@ class PlatformTests(unittest.TestCase):
             backend.stop()
 
     def test_linux_observation_stop_closes_listener(self):
+        """Stopping observation from the listener closes it and reports success."""
         import threading
         from clipx.platforms.linux.clipboard import LinuxClipboardDriver
         driver = LinuxClipboardDriver()

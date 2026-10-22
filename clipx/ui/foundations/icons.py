@@ -1,4 +1,9 @@
-"""Small original SVG glyphs with a consistent stroke weight."""
+"""Small original SVG glyphs with a consistent stroke weight.
+
+Glyphs are rendered to a transparent pixmap at twice the requested size and
+tagged with a device pixel ratio of two, so they stay crisp on HiDPI screens.
+Lucide assets are loaded from the bundled icon set for a few richer controls.
+"""
 from PyQt6.QtCore import QByteArray, Qt, QSize
 from pathlib import Path
 from functools import lru_cache
@@ -20,6 +25,19 @@ PATHS = {
 
 
 def icon(name, size=20, color=TEXT_SECONDARY):
+    """Render a named built-in glyph as a QIcon.
+
+    Unknown names fall back to the ``text`` glyph. The SVG is rendered into a
+    transparent pixmap of ``size * 2`` pixels with a device pixel ratio of two.
+
+    Args:
+        name (str): Key from ``PATHS`` identifying the glyph.
+        size (int): Logical icon size in pixels.
+        color (str): Stroke color applied to the SVG.
+
+    Returns:
+        QIcon: Rendered icon.
+    """
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{PATHS.get(name, PATHS["text"])}</svg>'
     pixmap = QPixmap(size * 2, size * 2)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -31,7 +49,16 @@ def icon(name, size=20, color=TEXT_SECONDARY):
 
 
 def label_icon(label, name, size=20):
-    """Keep source metadata so appearance changes can redraw crisp glyphs."""
+    """Keep source metadata so appearance changes can redraw crisp glyphs.
+
+    Stores the glyph name and size as dynamic properties and immediately sets
+    the corresponding pixmap on the label.
+
+    Args:
+        label (QLabel): Label that displays the glyph.
+        name (str): Key from ``PATHS`` identifying the glyph.
+        size (int): Logical icon size in pixels.
+    """
     label.setProperty('iconName', name)
     label.setProperty('iconSize', size)
     label.setPixmap(icon(name, size).pixmap(size, size))
@@ -39,6 +66,18 @@ def label_icon(label, name, size=20):
 
 @lru_cache(maxsize=4)
 def _lucide_svg(name):
+    """Read a bundled Lucide SVG from disk, caching the result.
+
+    Args:
+        name (str): Lucide icon name; only ``palette``, ``panels-top-left``,
+            ``app-window``, ``keyboard`` and ``loader-circle`` are allowed.
+
+    Returns:
+        str: Raw SVG markup.
+
+    Raises:
+        ValueError: If ``name`` is not one of the allowed icons.
+    """
     allowed = {'palette', 'panels-top-left', 'app-window', 'keyboard', 'loader-circle'}
     if name not in allowed:
         raise ValueError('Ícone Lucide desconhecido: ' + name)
@@ -46,6 +85,20 @@ def _lucide_svg(name):
 
 
 def loading_icon(size, color, angle):
+    """Render the Lucide spinner glyph rotated by a given angle.
+
+    The pixmap is drawn at twice the requested size and scaled down through a
+    device pixel ratio of two. The same pixmap is registered for normal and
+    disabled icon modes.
+
+    Args:
+        size (int): Logical icon size in pixels.
+        color (str): Stroke color substituted for ``currentColor``.
+        angle (int | float): Rotation in degrees.
+
+    Returns:
+        QIcon: Rotated spinner icon.
+    """
     svg = _lucide_svg('loader-circle').replace('currentColor', color)
     pixmap = QPixmap(size * 2, size * 2)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -64,7 +117,17 @@ def loading_icon(size, color, angle):
 
 
 def refresh_lucide_button(button, values):
-    """Render original Lucide assets with semantic color and logical scaling."""
+    """Render original Lucide assets with semantic color and logical scaling.
+
+    The icon name is read from the button's ``lucideIcon`` property. The color
+    follows the semantic palette (primary text when checked, secondary
+    otherwise) and the size is the 18 px base scaled by ``values['scale']``.
+    The rendered pixmap is assigned together with a matching icon size.
+
+    Args:
+        button (QAbstractButton): Button carrying the ``lucideIcon`` property.
+        values (dict): Appearance values, including ``scale`` (percent).
+    """
     from clipx.ui.foundations.appearance import palette_for
     colors = palette_for(values)
     color = colors['text' if button.isChecked() else 'secondary']

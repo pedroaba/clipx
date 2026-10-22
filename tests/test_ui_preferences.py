@@ -18,7 +18,10 @@ from clipx.ui.pages.preferences import PreferencesDialog
 
 
 class UISettingsTests(unittest.TestCase):
+    """Validate UI settings fallbacks and atomic persistence."""
+
     def test_invalid_values_fall_back_individually(self):
+        """Only invalid UI values are replaced; valid and unrelated values are kept."""
         values = validate_ui({'theme': 'light', 'scale': True, 'lines': 99, 'metadata': 1})
         self.assertEqual(values['theme'], 'light')
         self.assertEqual(values['scale'], 100)
@@ -26,6 +29,7 @@ class UISettingsTests(unittest.TestCase):
         self.assertIs(values['metadata'], True)
 
     def test_atomic_save_preserves_unrelated_fields_and_shortcuts(self):
+        """Saving UI settings keeps unknown and shortcut fields and leaves no temp file behind."""
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'settings.json'
             shortcuts = ShortcutSettings(path)
@@ -48,12 +52,16 @@ class UISettingsTests(unittest.TestCase):
 
 
 class PreferencesTests(unittest.TestCase):
+    """Exercise live preference editing, applying, rollback and window restore."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        """Build an isolated window, fake drivers and preferences dialog."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         path = Path(self.temp.name)
@@ -74,9 +82,16 @@ class PreferencesTests(unittest.TestCase):
         self.addCleanup(self.page.cancel_changes)
 
     def choose(self, key, value):
+        """Select ``value`` in the combo box control registered under ``key``.
+
+        Args:
+            key: Identifier of the control in ``self.page.controls``.
+            value: Item data value to select.
+        """
         self.page.controls[key].setCurrentIndex(self.page.controls[key].findData(value))
 
     def test_draft_survives_navigation_and_apply_keeps_dialog_open(self):
+        """Drafts survive section switches and Apply updates live state without closing."""
         self.page.show()
         self.choose('theme', 'light')
         self.page.select_section('content')
@@ -94,6 +109,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.page.footer.change_label.text(), 'Configurações aplicadas')
 
     def test_failure_preserves_live_state_and_draft_and_rolls_back_global(self):
+        """A save failure keeps the draft, restores live state and rolls back the global."""
         self.choose('theme', 'light')
         self.page.global_edit.setKeySequence(QKeySequence('Meta+L'))
         with patch.object(self.window.ui_settings, 'save', side_effect=OSError('disk full')):
@@ -105,10 +121,17 @@ class PreferencesTests(unittest.TestCase):
         self.assertIn('disk full', self.page.general_error.text())
 
     def test_apply_shows_loading_during_save_and_restores_buttons(self):
+        """Apply shows a spinner and disabled buttons during the save, then restores them."""
         self.choose('theme', 'light')
         save = self.window.ui_settings.save
 
         def saving(*args, **kwargs):
+            """Assert the loading state the page shows while the save runs.
+
+            Args:
+                *args: Positional arguments forwarded to the real ``save``.
+                **kwargs: Keyword arguments forwarded to the real ``save``.
+            """
             self.assertTrue(self.page.buttons.loading)
             self.assertEqual(self.page.apply_button.text(), 'Aplicando…')
             self.assertFalse(self.page.apply_button.icon().isNull())
@@ -135,6 +158,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertFalse(self.page.general_error.isHidden())
 
     def test_restore_is_scoped_and_cancel_discards(self):
+        """Restore affects only the current section and cancel discards without saving."""
         self.choose('theme', 'light')
         self.choose('lines', 3)
         self.page.select_section('content')
@@ -146,6 +170,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertFalse(self.window.ui_settings.path.exists())
 
     def test_shortcuts_and_ui_apply_atomically_without_closing(self):
+        """UI and shortcut changes are saved in one file and Apply keeps the dialog open."""
         self.page.show()
         self.choose('scale', 125)
         self.page.editors['pin'].setKeySequence(QKeySequence('Ctrl+L'))
@@ -158,6 +183,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertTrue(self.page.isVisible())
 
     def test_apply_clears_shortcut_pending_state_and_tracks_next_edit(self):
+        """Apply clears pending shortcut markers and the next edit marks the draft as unsaved."""
         self.page.controller.record_sequence('pin', 'Ctrl+L')
         self.assertEqual(self.page.controller.pending_count, 1)
         self.page.apply_changes()
@@ -173,6 +199,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertTrue(self.page.apply_button.isEnabled())
 
     def test_reopen_clear_resets_filter_and_selection(self):
+        """Reopen mode ``clear`` empties the query, resets the filter and selects the first row."""
         self.window.preferences['reopen'] = 'clear'
         self.window.search_bar.input_field.setText('missing')
         self.window.search_bar.filter_select.setCurrentIndex(1)
@@ -182,6 +209,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.clip_list.currentRow(), 0)
 
     def test_geometry_restores_and_offscreen_position_is_clamped(self):
+        """A saved position offscreen is clamped while the saved size is preserved."""
         self.window.preferences['position'] = 'last'
         self.window._saved_window = {'position': [90000, 90000], 'size': [800, 500], 'splitter': [300, 500]}
         self.window.restore_window()
@@ -189,6 +217,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.width(), 800)
 
     def test_scale_is_not_cumulative_and_content_options_update(self):
+        """Applying scale twice does not compound it and content options update rows and preview."""
         values = {**DEFAULT_UI, 'scale': 150, 'lines': 3, 'syntax': False, 'metadata': False}
         self.window.apply_preferences(values)
         margins = self.window.surface.layout().contentsMargins().left()
@@ -202,6 +231,7 @@ class PreferencesTests(unittest.TestCase):
         self.window.close()
 
     def test_recording_restores_pending_ui_count_when_stopped(self):
+        """Stopping shortcut recording re-enables Apply and restores the pending change count."""
         self.choose('theme', 'light')
         self.page.controller.start_recording('pin')
         self.assertFalse(self.page.apply_button.isEnabled())
@@ -210,6 +240,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertIn('1 alteração', self.page.footer.change_label.text())
 
     def test_close_prompts_allow_continue_discard_and_apply(self):
+        """Closing a dirty dialog can be cancelled to keep editing or confirmed to discard."""
         self.page.show()
         self.choose('theme', 'light')
         with patch.object(QMessageBox, 'exec'), patch.object(QMessageBox, 'clickedButton', return_value=None):
@@ -217,6 +248,11 @@ class PreferencesTests(unittest.TestCase):
         self.assertTrue(self.page.isVisible())
         self.assertTrue(self.page.dirty())
         def discard(box):
+            """Click the Discard button in the close-confirmation dialog.
+
+            Args:
+                box (QMessageBox): Dialog whose buttons are scanned for the label.
+            """
             for button in box.buttons():
                 if button.text() == 'Descartar':
                     button.click()
@@ -226,9 +262,15 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.preferences['theme'], 'dark')
 
     def test_close_apply_commits_before_closing(self):
+        """Choosing Apply in the close prompt persists the draft before the dialog closes."""
         self.page.show()
         self.choose('theme', 'light')
         def apply(box):
+            """Click the Apply button in the close-confirmation dialog.
+
+            Args:
+                box (QMessageBox): Dialog whose buttons are scanned for the label.
+            """
             for button in box.buttons():
                 if button.text() == 'Aplicar':
                     button.click()
@@ -238,6 +280,7 @@ class PreferencesTests(unittest.TestCase):
         self.assertEqual(self.window.ui_settings.load()['theme'], 'light')
 
     def test_system_theme_changes_reapply_only_when_selected(self):
+        """System color-scheme changes update the window only when the system theme is selected."""
         from clipx.ui.foundations.appearance import is_light
         from PyQt6.QtCore import Qt
         values = {**DEFAULT_UI, 'theme': 'system'}
@@ -250,6 +293,7 @@ class PreferencesTests(unittest.TestCase):
             self.assertFalse(self.window.property('lightTheme'))
 
     def test_opaque_material_removes_native_effects(self):
+        """Selecting the opaque material removes native effects and clears the surface property."""
         self.window.show()
         with patch.object(self.platform.effects, 'remove') as remove, patch.object(self.platform.effects, 'apply') as apply:
             self.window.apply_preferences({**DEFAULT_UI, 'material': 'opaque'})
@@ -259,6 +303,7 @@ class PreferencesTests(unittest.TestCase):
         self.window.close()
 
     def test_large_scale_preferences_keep_actions_accessible_at_minimum(self):
+        """At large scale and minimum size, footer buttons stay inside the dialog."""
         self.page.show()
         self.choose('scale', 150)
         self.page.apply_changes()

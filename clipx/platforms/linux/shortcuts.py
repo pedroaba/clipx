@@ -1,4 +1,11 @@
-"""GNOME global shortcut backend."""
+"""GNOME global shortcut backend.
+
+Reads and writes ClipX's custom keybinding through the ``gsettings`` command
+line tool under the GNOME media-keys schema. GNOME stores accelerators in its
+own ``<Control><Alt>key`` syntax, so this module translates between that syntax
+and the portable sequences used by the rest of ClipX. It also detects and, with
+explicit approval, reassigns conflicting system keybindings.
+"""
 import ast
 import json
 import os
@@ -13,7 +20,21 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence
 from clipx.shortcuts import normalize
 
+
 def from_gnome(binding):
+    """Convert a GNOME accelerator description into a normalized key sequence.
+
+    Modifier tags such as ``<Super>``, ``<Primary>`` or ``<Control>`` are mapped
+    to their portable names, and the remaining key name is translated from the
+    X11/GNOME spelling (for example ``Page_Up`` or ``ISO_Left_Tab``).
+
+    Args:
+        binding (str | None): GNOME accelerator string, or a falsy value for no
+            binding.
+
+    Returns:
+        str: Normalized sequence, or an empty string when ``binding`` is falsy.
+    """
     if not binding:
         return ""
     tags = re.findall(r"<([^>]+)>", binding)
@@ -30,6 +51,23 @@ def from_gnome(binding):
 
 
 def to_gnome(sequence):
+    """Convert a portable key sequence into a GNOME accelerator description.
+
+    The sequence is parsed with Qt's key-sequence parser and rebuilt as
+    ``<Control>``/``<Alt>``/``<Shift>``/``<Super>`` tags followed by the GNOME
+    key name.
+
+    Args:
+        sequence (str): Portable key sequence, for example ``Ctrl+V``.
+
+    Returns:
+        str: GNOME accelerator string, or an empty string for an empty sequence.
+
+    Raises:
+        ValueError: If the sequence has no modifier, if it would interfere with
+            typing (only Shift plus a printable key), or if the key is not on
+            GNOME's supported list. Messages are user-facing Portuguese text.
+    """
     if not sequence:
         return ""
     combo = QKeySequence(normalize(sequence))[0]
@@ -60,9 +98,27 @@ def to_gnome(sequence):
     return tags + (key.lower() if len(key) == 1 else key)
 
 
-
-
 class LinuxGlobalShortcut:
+    """Manage ClipX's global shortcut through GNOME's custom keybindings.
+
+    The backend shells out to ``gsettings`` and therefore works with the GNOME
+    settings daemon rather than registering a grab directly with X11 or
+    Wayland. All mutating operations verify the value GNOME reports back and
+    raise ``RuntimeError`` when the change is not confirmed.
+
+    Attributes:
+        SCHEMA (str): Media-keys schema that owns custom keybindings.
+        PATH (str): Relative keybinding path reserved for ClipX.
+        CUSTOM (str): Relative schema prefix for one custom keybinding.
+        SYSTEM_SCHEMAS (tuple[str, ...]): Schemas scanned for conflicts.
+        recovery_path (Path): JSON file used to restore a paused binding.
+        modifier_hint (str): User-facing hint shown beside the recorder.
+        to_binding (staticmethod): Alias of :func:`to_gnome`.
+        from_binding (staticmethod): Alias of :func:`from_gnome`.
+        default_sequence (str): Default shortcut used by ClipX.
+        portable_bindings (bool): Whether bindings are stored portably; always
+            ``False`` because GNOME keeps its own accelerator syntax.
+    """
     SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
     PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/clipx/"
     CUSTOM = SCHEMA + ".custom-keybinding:"
@@ -72,12 +128,30 @@ class LinuxGlobalShortcut:
     )
 
     def __init__(self, recovery_path=None):
+        """Initialize the backend and choose the recovery file location.
+
+        Args:
+            recovery_path (str | os.PathLike | None): Explicit path for the
+                recovery JSON file. When omitted, the file lives under
+                ``XDG_CONFIG_HOME`` (or ``~/.config``) in ``clipx``.
+        """
         self.recovery_path = Path(recovery_path) if recovery_path else Path(
             os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
         ) / "clipx" / "shortcut-recording.json"
 
     def pause(self):
-        """Pause only ClipX's binding while the user explicitly records keys."""
+        """Pause only ClipX's binding while the user explicitly records keys.
+
+        The current binding is flushed to the recovery file before GNOME's
+        binding is cleared, so an interrupted recording can be undone later.
+
+        Returns:
+            str: The paused binding, or an empty string when nothing was bound.
+
+        Raises:
+            RuntimeError: If reading or clearing the GNOME binding fails.
+            OSError: If the recovery file cannot be written.
+        """
         self.recover()
         binding = self.read()
         if not binding:
@@ -95,6 +169,15 @@ class LinuxGlobalShortcut:
         return binding
 
     def resume(self, binding):
+        """Restore a binding after recording and remove the recovery file.
+
+        If GNOME already has a binding (for example one the user set while
+        recording was paused), that value is kept and ``binding`` is ignored.
+
+        Args:
+            binding (str): Previously paused binding to restore when the current
+                binding is empty.
+        """
         if not binding:
             return
         # Respect changes made in GNOME settings while recording was paused.
@@ -103,7 +186,15 @@ class LinuxGlobalShortcut:
         self.recovery_path.unlink(missing_ok=True)
 
     def recover(self):
-        """Restore a paused binding after an interrupted recording session."""
+        """Restore a paused binding after an interrupted recording session.
+
+        Does nothing when no recovery file exists. The file is removed by
+        :meth:`resume`.
+
+        Raises:
+            RuntimeError: If the recovery file has no valid non-empty string
+                binding, or if restoring the binding fails.
+        """
         if self.recovery_path.exists():
             data = json.loads(self.recovery_path.read_text())
             binding = data.get("binding")
@@ -112,6 +203,21 @@ class LinuxGlobalShortcut:
             self.resume(binding)
 
     def run(self, *args):
+        """Run a ``gsettings`` command and return its trimmed standard output.
+
+        The subprocess is bounded to a three second timeout and its output is
+        captured.
+
+        Args:
+            *args (str): Arguments forwarded to ``gsettings``.
+
+        Returns:
+            str: Stripped standard output of the command.
+
+        Raises:
+            RuntimeError: If the executable is missing, the call times out, or
+                ``gsettings`` exits with a non-zero status.
+        """
         try:
             result = subprocess.run(["gsettings", *args], capture_output=True,
                                     text=True, timeout=3, check=True)
@@ -120,29 +226,82 @@ class LinuxGlobalShortcut:
             raise RuntimeError("Não foi possível acessar os atalhos do GNOME nesta sessão.") from exc
 
     def get(self, schema, key):
+        """Read and parse a typed ``gsettings`` value.
+
+        A leading ``@as `` type annotation is stripped before parsing with
+        :func:`ast.literal_eval`, so string lists come back as Python lists.
+
+        Args:
+            schema (str): Schema identifier or relative schema and path.
+            key (str): Key to read.
+
+        Returns:
+            object: Parsed value produced by ``ast.literal_eval``.
+
+        Raises:
+            RuntimeError: If ``gsettings`` cannot be queried.
+            ValueError: If the reported value is not a Python literal.
+        """
         value = self.run("get", schema, key)
         if value.startswith("@as "):
             value = value[4:]
         return ast.literal_eval(value)
 
     def read(self):
+        """Read ClipX's current GNOME accelerator.
+
+        Returns:
+            str: GNOME accelerator description, or an empty string when unset.
+
+        Raises:
+            RuntimeError: If ``gsettings`` cannot be queried.
+        """
         return self.get(self.CUSTOM + self.PATH, "binding")
 
     def conflicts(self, sequence):
+        """List display names of bindings that would conflict with a sequence.
+
+        Args:
+            sequence (str): Portable key sequence to check.
+
+        Returns:
+            list[str]: Names reported by :meth:`conflict_bindings`.
+        """
         return [item["name"] for item in self.conflict_bindings(sequence)]
 
     def conflict_bindings(self, sequence):
+        """Find system and custom bindings that use the requested sequence.
+
+        Every schema in ``SYSTEM_SCHEMAS`` is dumped with
+        ``gsettings list-recursively``; string and string-list values that
+        normalize to ``sequence`` are collected, together with ClipX's sibling
+        custom keybindings. Schemas missing from a GNOME installation are
+        skipped, and entries whose GNOME syntax cannot be normalized are
+        ignored.
+
+        Args:
+            sequence (str): Portable key sequence to look for.
+
+        Returns:
+            list[dict]: One entry per conflicting binding, with the keys
+                ``schema``, ``key``, ``value`` and ``name``.
+
+        Raises:
+            RuntimeError: If the custom keybinding list cannot be read.
+        """
         wanted = normalize(sequence)
         found = []
         seen = set()
 
         def matches(binding):
+            """Report whether a single GNOME binding equals the wanted sequence."""
             try:
                 return bool(binding) and from_gnome(binding) == wanted
             except (ValueError, KeyError, TypeError):
                 return False
 
         def add(schema, key, value, name):
+            """Record a conflicting key at most once, keyed by schema and key."""
             bindings = value if isinstance(value, list) else [value]
             identity = (schema, key)
             if identity not in seen and any(matches(binding) for binding in bindings):
@@ -173,6 +332,22 @@ class LinuxGlobalShortcut:
         return found
 
     def restore_conflicts(self, changes):
+        """Put back bindings that :meth:`reassign` cleared.
+
+        Each change is restored in reverse order, but only when the current
+        value is still the replacement written by ClipX. A value changed by
+        another application is reported instead of overwritten.
+
+        Args:
+            changes (list[dict]): Change records produced by :meth:`reassign`,
+                each containing ``schema``, ``key``, ``name``, ``value`` and
+                ``replacement``.
+
+        Raises:
+            RuntimeError: If the value was changed elsewhere, if the restore is
+                not confirmed by GNOME, or if any binding could not be restored.
+                The message lists the affected names.
+        """
         errors = []
         for item in reversed(changes):
             try:
@@ -189,7 +364,28 @@ class LinuxGlobalShortcut:
             raise RuntimeError("Não foi possível restaurar: " + ", ".join(errors))
 
     def reassign(self, binding, approved_conflicts):
-        """Transfer only the approved combination, preserving other bindings."""
+        """Transfer only the approved combination, preserving other bindings.
+
+        Before changing anything, the current conflicts must equal
+        ``approved_conflicts``; otherwise the user has to review them again. For
+        each conflicting key the matching accelerator is removed (or the whole
+        key cleared for scalar values), then ClipX's binding is written. On any
+        failure the previous ClipX binding and every touched key are restored,
+        and the collected errors are combined into one exception.
+
+        Args:
+            binding (str): GNOME accelerator description to assign to ClipX.
+            approved_conflicts (list[dict]): Conflict records the user approved,
+                as returned by :meth:`conflict_bindings`.
+
+        Returns:
+            list[dict]: Applied change records, each with an added
+                ``replacement`` value, suitable for :meth:`restore_conflicts`.
+
+        Raises:
+            RuntimeError: If the conflicts changed, a system binding changed, a
+                write or verification failed, or restoration failed.
+        """
         wanted = from_gnome(binding)
         current = self.conflict_bindings(wanted)
         if current != approved_conflicts:
@@ -231,6 +427,20 @@ class LinuxGlobalShortcut:
             raise RuntimeError(" ".join(errors)) from exc
 
     def write(self, binding):
+        """Write ClipX's accelerator, registering the custom keybinding if needed.
+
+        On first use the keybinding entry is created with a name and a launch
+        command (the repository launcher when present, otherwise a module
+        command), and its path is appended to the media-keys
+        ``custom-keybindings`` list.
+
+        Args:
+            binding (str): GNOME accelerator description; an empty string
+                disables the shortcut.
+
+        Raises:
+            RuntimeError: If GNOME does not confirm the written binding.
+        """
         paths = self.get(self.SCHEMA, "custom-keybindings")
         schema = self.CUSTOM + self.PATH
         if self.PATH not in paths:
@@ -252,7 +462,19 @@ class LinuxGlobalShortcut:
     portable_bindings = False
 
     def start(self, callback):
+        """Recover any interrupted recording before the shortcut becomes active.
+
+        GNOME itself owns the accelerator, so no callback is registered here.
+
+        Args:
+            callback (callable): Activation callback supplied by the generic
+                shortcut interface; unused on Linux.
+
+        Raises:
+            RuntimeError: If a pending recovery cannot be completed.
+        """
         self.recover()
 
     def stop(self):
+        """Do nothing, because GNOME keeps the shortcut registered after exit."""
         pass

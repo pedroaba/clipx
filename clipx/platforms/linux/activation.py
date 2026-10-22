@@ -8,6 +8,17 @@ import uuid
 
 
 def startup_message(token, timestamp, screen):
+    """Build a ``_NET_STARTUP_INFO`` payload for a desktop launch.
+
+    Args:
+        token (str): Startup notification identifier.
+        timestamp (int): X server timestamp of the launch.
+        screen (int): Screen number where the window should appear.
+
+    Returns:
+        bytes: NUL-terminated UTF-8 message ready to be sent in 20-byte
+            client-message chunks.
+    """
     return (f'new: ID="{token}" NAME="ClipX" SCREEN={screen} '
             f'TIMESTAMP={timestamp} BIN="clipx" APPLICATION_ID="clipx.desktop"\0').encode("utf-8")
 
@@ -17,6 +28,19 @@ def x11_startup_token():
 
     The startup-notification protocol also covers activating existing windows.
     Its requestor stays unmapped and never takes focus itself.
+
+    The timestamp is obtained by changing a property on a hidden requestor
+    window and waiting up to one second for the resulting ``PropertyNotify``.
+    The startup message is then sent to the root window as a sequence of
+    ``_NET_STARTUP_INFO_BEGIN``/``_NET_STARTUP_INFO`` client messages. The X
+    connection and requestor window are always cleaned up.
+
+    Returns:
+        str: Startup notification token of the form
+            ``clipx-<pid>-<uuid>_TIME<timestamp>``.
+
+    Raises:
+        RuntimeError: If no activation timestamp is received within one second.
     """
     from Xlib import X, Xatom, display, protocol
 
@@ -64,6 +88,17 @@ def x11_startup_token():
 
 
 def activation_token_for_launch():
+    """Return the best activation token available for opening a window.
+
+    Existing ``XDG_ACTIVATION_TOKEN`` and ``DESKTOP_STARTUP_ID`` environment
+    variables take precedence. Otherwise, when both Wayland and X11 displays are
+    present and the active Qt platform is neither ``offscreen`` nor ``minimal``,
+    a token is announced through XWayland. Failures from that attempt are
+    logged as warnings and treated as "no token".
+
+    Returns:
+        str: Activation token, or an empty string when none is available.
+    """
     token = os.environ.get("XDG_ACTIVATION_TOKEN") or os.environ.get("DESKTOP_STARTUP_ID")
     if token:
         return token

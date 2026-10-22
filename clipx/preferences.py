@@ -1,4 +1,10 @@
-"""Validated UI settings, sharing the existing atomic settings store."""
+"""Validated UI settings, sharing the existing atomic settings store.
+
+The module defines the permitted UI options, validation that coerces unknown or
+invalid values back to defaults, and a settings class that reads and writes the
+``ui`` section of the shared ``settings.json`` atomically.
+"""
+
 import json
 from clipx.shortcuts import ShortcutSettings
 
@@ -15,13 +21,38 @@ DEFAULT_UI['lines'] = 2
 
 
 def validate_ui(values):
+    """Return a complete UI settings mapping containing only allowed values.
+
+    Every key in ``OPTIONS`` is present in the result. Values must match one of
+    the allowed options by both type and equality; anything else falls back to
+    the default.
+
+    Args:
+        values: Candidate mapping, ignored when it is not a dict.
+
+    Returns:
+        dict: Validated settings keyed by option name.
+    """
     values = values if isinstance(values, dict) else {}
     return {key: values[key] if key in values and any(type(values[key]) is type(v) and values[key] == v for v in options)
             else DEFAULT_UI[key] for key, options in OPTIONS.items()}
 
 
 class UISettings(ShortcutSettings):
+    """Read and write validated UI preferences in the shared settings file.
+
+    The class reuses the path resolution and atomic write pattern of
+    :class:`~clipx.shortcuts.ShortcutSettings` while preserving unrelated
+    sections such as shortcuts and window geometry.
+    """
+
     def read_document(self):
+        """Read the raw settings document.
+
+        Returns:
+            dict: Parsed JSON object, or an empty dict when the file is missing,
+            unreadable, invalid JSON, or not a JSON object.
+        """
         try:
             data = json.loads(self.path.read_text())
             return data if isinstance(data, dict) else {}
@@ -29,9 +60,30 @@ class UISettings(ShortcutSettings):
             return {}
 
     def load(self):
+        """Load validated UI settings from the ``ui`` section.
+
+        Returns:
+            dict: Complete validated UI settings with defaults applied.
+        """
         return validate_ui(self.read_document().get('ui'))
 
     def save(self, values, geometry=None, shortcuts=None):
+        """Validate and atomically persist UI settings and optional sections.
+
+        The document is written to a temporary file in the settings directory
+        and then replaces the settings file. Unrelated existing sections are
+        preserved. The temporary file is removed on failure.
+
+        Args:
+            values: Candidate UI settings, normalized by ``validate_ui``.
+            geometry: Optional window geometry stored under ``window``.
+            shortcuts: Optional shortcut mapping stored under ``shortcuts``
+                after validation.
+
+        Raises:
+            OSError: If the settings directory or file cannot be written.
+            ValueError: If ``shortcuts`` fails shortcut validation.
+        """
         import tempfile
         from pathlib import Path
         data = self.read_document()

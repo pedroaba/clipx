@@ -1,4 +1,8 @@
-"""Unified preferences, retaining the existing shortcut recorder and transaction."""
+"""Unified preferences, retaining the existing shortcut recorder and transaction.
+
+UI preferences and shortcuts share one dialog, one pending-changes counter and
+one apply step; the shortcut transaction still rolls back on failure.
+"""
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
                             QStackedWidget, QScrollArea, QMessageBox, QFrame, QBoxLayout)
@@ -35,8 +39,22 @@ SECTIONS = {
 
 
 class PreferenceRow(QWidget):
-    """Keep descriptions readable instead of squeezing them beside long selects."""
+    """Keep descriptions readable instead of squeezing them beside long selects.
+
+    Attributes:
+        control (Select): Control placed beside, or below, the label; assigned by
+            the dialog after the row is built.
+    """
+
     def resizeEvent(self, event):
+        """Stack the label and control vertically on narrow rows.
+
+        The threshold scales with the window's ``scale`` preference, and the
+        control alignment follows the chosen direction.
+
+        Args:
+            event (QResizeEvent): Resize event forwarded to the base class.
+        """
         super().resizeEvent(event)
         scale = self.window().window.preferences['scale'] / 100
         narrow = self.width() < 620 * scale
@@ -45,7 +63,33 @@ class PreferenceRow(QWidget):
 
 
 class PreferencesDialog(ShortcutsDialog):
+    """Preferences dialog with shortcut, appearance, content and window pages.
+
+    The shortcut surface built by the parent dialog becomes one page of a shared
+    stack. UI controls and shortcuts share the footer counter, and closing with
+    pending changes asks whether to apply, discard or keep editing. Successful
+    applies advance the baseline without closing the dialog.
+
+    Attributes:
+        baseline_ui (dict): Saved UI preferences the draft is compared to.
+        controls (dict[str, Select]): Preference selects indexed by key.
+        section (str): Section currently displayed.
+        navigation (dict[str, QPushButton]): Section buttons indexed by key.
+        stack (QStackedWidget): Pages with the shortcut surface first.
+        pages (dict[str, QScrollArea]): Scroll areas indexed by section key.
+        sample (QFrame): Appearance sample rendered with the draft preferences.
+        general_error (QLabel): Error line used outside the shortcut recorder.
+    """
+
     def __init__(self, window, backend=None, section='appearance'):
+        """Build the unified dialog and its preference pages.
+
+        Args:
+            window (ClipXMainWindow): Window that owns the settings.
+            backend (object | None): Global-shortcut backend; a default is
+                created by the parent when omitted.
+            section (str): Section selected on open.
+        """
         self._ready = False
         super().__init__(window, backend)
         self.setWindowTitle('ClipX — Preferências')
@@ -186,16 +230,39 @@ class PreferencesDialog(ShortcutsDialog):
         QApplication.styleHints().colorSchemeChanged.connect(self.refresh_appearance)
 
     def focus_shortcut_search(self):
+        """Switch to the Shortcuts section and focus its search field.
+
+        This updates the sidebar selection and delegates focusing to the
+        shortcut page's search field.
+        """
         self.select_section('shortcuts')
         self.focus_search()
 
     def ui_draft(self):
+        """Return the current UI preference values from the controls.
+
+        Returns:
+            dict: Preference values indexed by preference key.
+        """
         return {key: control.currentData() for key, control in self.controls.items()}
 
     def dirty(self):
+        """Report whether UI preferences or shortcuts differ from the baseline.
+
+        Returns:
+            bool: ``True`` when there are unsaved changes.
+        """
         return self.ui_draft() != self.baseline_ui or self.controller.draft() != self.controller.baseline
 
     def update_pending(self, *args):
+        """Recount pending changes and refresh the footer and appearance sample.
+
+        Combined counts come from the shortcut controller and the preference
+        controls. Does nothing until the dialog finished initializing.
+
+        Args:
+            *args: Extra signal arguments, ignored.
+        """
         if not self._ready:
             return
         count = self.controller.pending_count + sum(value != self.baseline_ui[key] for key, value in self.ui_draft().items())
@@ -203,6 +270,14 @@ class PreferencesDialog(ShortcutsDialog):
         apply_surface(self.sample, self.ui_draft(), PREFERENCES_QSS)
 
     def select_section(self, name):
+        """Display a section, stopping any recording first.
+
+        While the global binding is paused, the request is ignored so the active
+        recorder keeps its state.
+
+        Args:
+            name (str): Section key to display.
+        """
         self.controller.stop_recording()
         if self.controller.paused_binding is not None:
             return
@@ -213,6 +288,7 @@ class PreferencesDialog(ShortcutsDialog):
         self.update_pending()
 
     def restore_section(self):
+        """Restore defaults for the current section, without saving them."""
         if self.section == 'shortcuts':
             self.controller.restore_defaults()
         else:
@@ -221,12 +297,29 @@ class PreferencesDialog(ShortcutsDialog):
         self.update_pending()
 
     def persist_settings(self, shortcuts):
+        """Persist the UI draft together with the validated shortcuts.
+
+        Args:
+            shortcuts (dict[str, str]): Shortcut values to store.
+        """
         self.window.ui_settings.save(self.ui_draft(), shortcuts=shortcuts)
 
     def apply_changes(self):
+        """Apply pending changes with loading feedback.
+
+        Returns:
+            object: Whatever ``run_loading`` returns for the apply callback.
+        """
         return self.buttons.run_loading(self._apply_changes)
 
     def _apply_changes(self):
+        """Persist shortcuts and preferences, reporting errors inline.
+
+        Shortcuts are saved through the controller transaction when they
+        changed; a controller error is mirrored into the footer message. When
+        only UI preferences changed, the settings are written directly and write
+        failures are shown instead of closing the dialog.
+        """
         self.general_error.hide()
         self.error_label.hide()
         if self.controller.draft() != self.controller.baseline:
@@ -244,6 +337,12 @@ class PreferencesDialog(ShortcutsDialog):
             self.accept()
 
     def accept(self):
+        """Apply the UI draft, advance the baselines and refresh the appearance.
+
+        Shortcut messages are cleared, the global binding is re-read when
+        possible for future rollbacks, and the footer confirms the apply. The
+        dialog stays open.
+        """
         if not self._ready:
             return super().accept()
         self.window.apply_preferences(self.ui_draft())
@@ -261,16 +360,30 @@ class PreferencesDialog(ShortcutsDialog):
         self.footer.show_applied()
 
     def refresh_appearance(self, *args):
+        """Reapply the surface theme to the dialog and its appearance sample.
+
+        Args:
+            *args: Extra signal arguments, ignored.
+        """
         apply_surface(self, self.window.preferences, PREFERENCES_QSS)
         apply_window_chrome(self)
         if self._ready:
             apply_surface(self.sample, self.ui_draft(), PREFERENCES_QSS)
 
     def cancel_changes(self):
+        """Close the dialog without saving, marking the close as confirmed."""
         self._confirmed_close = True
         self.reject()
 
     def done(self, result):
+        """Handle dialog close, offering to apply pending changes first.
+
+        Recording is stopped first, and a paused global binding aborts the
+        close. If the draft is dirty, a question offers to apply, discard or
+        keep editing; applying still leaves the dialog open when saving fails.
+        Args:
+            result (int): Dialog result code.
+        """
         self.controller.stop_recording()
         if self.controller.paused_binding is not None:
             self._confirmed_close = False

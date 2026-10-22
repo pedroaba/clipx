@@ -9,11 +9,15 @@ from clipx.ui.molecules.select import Select
 
 
 class SelectTests(unittest.TestCase):
+    """Check popup selection keeps item data and emits the expected signals."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
 
     def test_popup_keyboard_selection_preserves_values_and_signals(self):
+        """Keyboard navigation selects the item data, emits once and Escape cancels."""
         select = Select(heading="Filtrar por tipo")
         try:
             select.addItem('Todos', 'all')

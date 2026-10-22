@@ -17,12 +17,16 @@ from clipx.ui.pages.clipboard import ClipXMainWindow
 
 
 class WindowTests(unittest.TestCase):
+    """Exercise search, copy, preview and refresh behavior with fake drivers."""
+
     @classmethod
     def setUpClass(cls):
+        """Create the shared offscreen QApplication."""
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setQuitOnLastWindowClosed(False)
 
     def setUp(self):
+        """Build isolated storage, a fake platform and the main window."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.storage = Storage(Path(self.temp.name) / 'history.db')
@@ -33,6 +37,7 @@ class WindowTests(unittest.TestCase):
         self.addCleanup(self.window.close)
 
     def test_copy_failure_keeps_window_and_does_not_update_recency(self):
+        """A failed copy shows the error, keeps the window open and does not reorder history."""
         self.storage.add_clip('keep this')
         self.window.load_clips()
         self.window.show()
@@ -45,6 +50,7 @@ class WindowTests(unittest.TestCase):
         self.platform.desktop.paste_to_previous.assert_not_called()
 
     def test_copy_only_writes_full_text_and_never_pastes(self):
+        """Copy writes the full clipboard content, hides the window and never pastes."""
         self.storage.add_clip('Olá\n世界\n')
         self.window.load_clips()
         self.window.show()
@@ -54,6 +60,7 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.window.isVisible())
 
     def test_refresh_preserves_selection_query_and_scroll(self):
+        """Reloading clips keeps the query, the selected clip and the scroll position."""
         for n in range(30):
             self.storage.add_clip(f'text {n}')
         self.window._on_search_query_changed('text')
@@ -70,6 +77,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.clip_list.verticalScrollBar().value(), scroll)
 
     def test_empty_and_no_results_and_capture_status_are_distinct(self):
+        """Empty history, no results and capture status use distinct messages."""
         self.assertIn('histórico está vazio', self.window.clip_list.empty_label.text())
         self.window._on_search_query_changed('absent')
         self.assertIn('Nenhum resultado', self.window.clip_list.empty_label.text())
@@ -80,6 +88,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.status_label.text(), 'Captura pausada')
 
     def test_actions_are_available_and_disabled_without_selection(self):
+        """The actions menu is disabled without a selection and enabled once a clip exists."""
         self.window.open_actions()
         self.assertTrue(all(not a.isEnabled() for a in self.window.actions_menu.actions() if not a.isSeparator()))
         self.window.actions_menu.close()
@@ -90,11 +99,13 @@ class WindowTests(unittest.TestCase):
         self.window.actions_menu.close()
 
     def test_html_in_text_is_displayed_literally(self):
+        """HTML-like text and spacing are shown literally instead of being rendered."""
         self.storage.add_clip('<b>literal</b>\n  preserve spaces', clip_type='text')
         self.window.load_clips()
         self.assertEqual(self.window.preview_pane.text_browser.toPlainText(), '<b>literal</b>\n  preserve spaces')
 
     def test_deactivation_closes_search_without_quitting_application(self):
+        """Window deactivation hides the search while the application keeps running."""
         from PyQt6.QtCore import QEvent
         from PyQt6.QtTest import QTest
         self.window.show()
@@ -107,6 +118,7 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.app.quitOnLastWindowClosed())
 
     def test_owned_actions_popup_does_not_dismiss_search(self):
+        """An owned actions popup keeps the search window open when it is inactive."""
         self.window.show()
         with patch.object(self.window, 'isActiveWindow', return_value=False), \
              patch.object(QApplication, 'activePopupWidget', return_value=self.window.actions_menu):
@@ -114,6 +126,7 @@ class WindowTests(unittest.TestCase):
         self.assertTrue(self.window.isVisible())
 
     def test_geist_is_loaded_locally_and_window_stays_opaque(self):
+        """Geist fonts are loaded locally and the window background stays dark and opaque."""
         from PyQt6.QtGui import QFontInfo
         self.window.show()
         self.assertEqual(self.window.windowOpacity(), 1.0)
@@ -128,6 +141,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(QFontInfo(self.window.preview_pane.text_browser.font()).family(), 'Geist Mono')
 
     def test_search_has_no_titlebar_and_close_keeps_application_running(self):
+        """The search window is frameless and closing it does not quit the application."""
         self.window.show()
         self.assertFalse(hasattr(self.window.surface, 'title_bar'))
         self.assertTrue(self.window.windowFlags() & Qt.WindowType.FramelessWindowHint)
@@ -136,6 +150,7 @@ class WindowTests(unittest.TestCase):
         self.assertFalse(self.app.quitOnLastWindowClosed())
 
     def test_typing_survives_repeated_activation_and_result_refresh(self):
+        """Repeated activation changes and reloads do not disturb the typed query or caret."""
         from PyQt6.QtCore import QEvent
         from PyQt6.QtTest import QTest
         self.storage.add_clip('pesquisa de exemplo')
@@ -152,6 +167,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(field.cursorPosition(), len('pesquisa'))
 
     def test_refocusing_search_preserves_cursor_and_selected_range(self):
+        """Refocusing the search keeps the caret position or the selected range intact."""
         from PyQt6.QtTest import QTest
         self.window.show()
         field = self.window.search_bar.input_field
@@ -167,6 +183,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(field.selectedText(), 'esX')
 
     def test_typing_reuses_rows_and_preview_for_unchanged_results(self):
+        """Narrowing a query that keeps the same results reuses rows and the preview."""
         for number in range(120):
             self.storage.add_clip(f'pesquisa exemplo {number}')
         self.window.load_clips()
@@ -182,6 +199,7 @@ class WindowTests(unittest.TestCase):
         self.assertIs(self.window.clip_list.itemWidget(selected), widget)
 
     def test_narrowing_and_expanding_only_constructs_new_results(self):
+        """Narrowing keeps existing rows and expanding constructs only the newly added results."""
         for number in range(20):
             self.storage.add_clip(f'grupo {"A" if number % 2 else "B"} item {number}')
         self.window.load_clips()
@@ -203,6 +221,7 @@ class WindowTests(unittest.TestCase):
                          [item.id for item in self.storage.get_clips()])
 
     def test_incremental_refresh_handles_pin_reorder_deletion_and_empty_results(self):
+        """Incremental refresh follows pin reorder, deletion and empty-then-restored result sets."""
         for number in range(5):
             self.storage.add_clip(f'item {number}')
         self.window.load_clips()
@@ -223,6 +242,7 @@ class WindowTests(unittest.TestCase):
         self.assertIsNotNone(self.window.preview_pane.current_item)
 
     def test_same_code_preview_is_not_highlighted_again(self):
+        """Re-searching within the same code clip does not trigger another syntax highlight."""
         self.storage.add_clip('def example():\n    return 1', 'code', 'python')
         self.window.load_clips()
         item = self.window.clip_list.get_selected_clip()

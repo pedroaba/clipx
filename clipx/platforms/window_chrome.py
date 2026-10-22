@@ -1,4 +1,11 @@
-"""Tint native window chrome without replacing OS controls or hit testing."""
+"""Tint native window chrome without replacing OS controls or hit testing.
+
+The window palette is always adjusted to match the active theme. On macOS with
+the Cocoa Qt platform, the native `NSWindow` is also tinted, given a transparent
+title bar, and decorated once with a unified toolbar holding a centered title
+and a separator line. AppKit keeps ownership of the traffic-light buttons,
+accessibility, and window dragging.
+"""
 import logging
 import sys
 from PyQt6.QtCore import QEvent, QObject
@@ -9,6 +16,20 @@ CHROME_COLOR = '#101012'
 
 
 def apply_window_chrome(window):
+    """Apply the theme palette and native macOS title-bar decoration.
+
+    The palette uses ``#FAFAFA`` with ``#18181B`` text for light windows and
+    `CHROME_COLOR` with ``#F4F4F5`` text otherwise, based on the boolean
+    ``lightTheme`` window property. Native tuning runs only on macOS with a
+    real platform plugin; ``offscreen`` and ``minimal`` return early. The
+    toolbar, centered title, and separator are created only on the first call
+    and cached on the window. Any native error is logged as a warning and does
+    not propagate.
+
+    Args:
+        window: Qt window to decorate; must be exposed so ``winId()`` resolves
+            to a native window.
+    """
     light = bool(window.property('lightTheme'))
     color = QColor('#FAFAFA' if light else CHROME_COLOR)
     palette = window.palette()
@@ -59,7 +80,19 @@ def apply_window_chrome(window):
 
 
 class NativeChromeFilter(QObject):
+    """Event filter that refreshes native chrome whenever a window is shown."""
+
     def eventFilter(self, watched, event):
+        """Apply the window chrome on show events.
+
+        Args:
+            watched: Object receiving the event; passed to
+                `apply_window_chrome` as the target window.
+            event (QEvent): Event being filtered.
+
+        Returns:
+            bool: Always False so the event continues to other receivers.
+        """
         if event.type() == QEvent.Type.Show:
             apply_window_chrome(watched)
         return False
