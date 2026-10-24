@@ -69,6 +69,10 @@ class ClipXTray(QSystemTrayIcon):
             action.triggered.connect(lambda checked=False, item=action: self.copy_clip(item.data()))
         self.shortcuts_action.triggered.connect(self.open_shortcuts)
         self.menu.preferences_action.triggered.connect(lambda checked=False: self.open_preferences())
+        from clipx.updates import update_service
+        self.updates = update_service()
+        self.menu.updates_action.triggered.connect(self.open_updates)
+        self.updates.install_ready.connect(self._install_update)
         if self.menu.permission_action is not None:
             self.menu.permission_action.triggered.connect(self.request_paste_permission)
         self.quit_action.triggered.connect(QApplication.instance().quit)
@@ -134,6 +138,19 @@ class ClipXTray(QSystemTrayIcon):
     def open_shortcuts(self):
         """Open the preferences dialog on the shortcuts section."""
         self.open_preferences('shortcuts')
+
+    def open_updates(self):
+        """Open the shared update page and check only on explicit user request."""
+        self.open_preferences('updates')
+        self.updates.check()
+
+    def _install_update(self):
+        """Bring back preferences to resolve edits made during the download."""
+        self.open_preferences('updates')
+        if self.shortcuts_dialog.prepare_update_restart():
+            self.updates.launch_install()
+        else:
+            self.updates.defer_install()
 
     def open_preferences(self, section='appearance'):
         """Open the preferences dialog, hiding the menu and the search window.

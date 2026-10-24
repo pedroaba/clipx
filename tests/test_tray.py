@@ -80,7 +80,7 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(
             [a.text() for a in self.tray.menu.actions() if not a.isSeparator() and a.isVisible()],
             ["Pesquisa", "Open", "Últimos 5 clips", "clip 6", "clip 5", "clip 4", "clip 3",
-             "clip 2", "Configurações", "Preferências…", "Atalhos", "Captura ativa", "Aplicativo", "Quit"],
+             "clip 2", "Configurações", "Preferências…", "Atalhos", "Captura ativa", "Aplicativo", "Verificar atualizações…", "Quit"],
         )
         self.assertEqual(self.storage.get_clips()[0].content, "clip 0")
         self.storage.add_clip("clip 0")
@@ -106,6 +106,24 @@ class TrayTests(unittest.TestCase):
             action.trigger()
             copy.assert_called_once_with(content)
         self.assertEqual(self.tray.clip_actions[0].data().content, content)
+
+    def test_update_action_opens_preferences_and_reuses_shared_service(self):
+        """The explicit tray action checks; ordinary navigation does not."""
+        dialog = Mock()
+        with patch.object(self.tray, 'open_preferences') as open_preferences, patch.object(self.tray.updates, 'check') as check:
+            self.tray.menu.updates_action.trigger()
+            open_preferences.assert_called_once_with('updates')
+            check.assert_called_once_with()
+        self.tray.shortcuts_dialog = dialog
+        with patch.object(self.tray, 'open_preferences'), patch.object(self.tray.updates, 'launch_install') as launch, patch.object(self.tray.updates, 'defer_install') as defer:
+            dialog.prepare_update_restart.return_value = False
+            self.tray._install_update()
+            launch.assert_not_called()
+            defer.assert_called_once_with()
+            dialog.prepare_update_restart.return_value = True
+            self.tray._install_update()
+            launch.assert_called_once_with()
+        self.tray.shortcuts_dialog = None
 
     def test_open_close_reopen_and_quit(self):
         """Open shows the search, closing keeps the app alive, and quit emits aboutToQuit."""

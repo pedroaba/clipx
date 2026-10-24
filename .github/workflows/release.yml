@@ -137,4 +137,5 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           gh release create "$RELEASE_TAG" dist/*.deb dist/*.dmg dist/SHA256SUMS-*.txt \
-            --verify-tag --title "ClipX $RELEASE_TAG" --generate-notes
+            --verify-tag --title "ClipX $RELEASE_TAG" --generate-notes \
+            --notes 'macOS: a distribuição padrão usa assinatura ad-hoc, sem Developer ID e sem notarização. Se a abertura for bloqueada, siga Instalar.txt no DMG e as orientações da Apple: https://support.apple.com/102445. Linux: instale o DEB correspondente à arquitetura. Confira os manifests SHA-256 desta release.'

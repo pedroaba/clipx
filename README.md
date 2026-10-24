@@ -287,6 +287,41 @@ Permanecem verificações manuais: colagem autorizada em aplicativos de terceiro
 
 Após o relato de encerramento ao clicar na bandeja, foi acrescentada uma proteção no driver macOS para a notificação `NSMenuDidBeginTrackingNotification` do Qt. O teste nativo reproduz a inscrição e entrega dessa notificação ao `QStatusItemDelegate`, sem consultar propriedades exclusivas de eventos de mouse. Os seis testes nativos macOS passaram após a correção.
 
+## Distribuição macOS sem conta paga Apple
+
+As releases padrão usam assinatura ad-hoc, sem Developer ID e sem notarização.
+Monte o DMG, arraste ClipX.app para Applications e tente abri-lo. Se o macOS bloquear
+o aplicativo e você confiar na origem, use **Ajustes do Sistema → Privacidade e
+Segurança → Abrir Mesmo Assim**, conforme as [orientações da Apple](https://support.apple.com/102445).
+O sistema pode solicitar autorização novamente após uma atualização. As instruções
+também acompanham o DMG em `Instalar.txt`. Não é necessário pagar o Apple Developer
+Program para usar esse modo de distribuição.
+
+## Atualizações pelo aplicativo
+
+Abra **Preferências → Atualizações** ou **Verificar atualizações…** no menu da
+bandeja. A consulta ao GitHub Releases acontece somente quando solicitada, sem
+token, e considera releases estáveis públicas. Nenhum conteúdo do histórico é enviado.
+
+Quando existir uma versão mais recente para seu sistema e arquitetura, escolha
+**Atualizar e reiniciar** ou **Baixar instalador**. O download mostra progresso,
+pode ser cancelado e precisa passar pela verificação SHA-256 publicada na release.
+Downloads continuam ao fechar as preferências; o estado é mantido durante a sessão.
+
+A atualização integrada funciona em um `ClipX.app` instalado fora do DMG e em
+instalações DEB em `/opt/clipx`. No macOS, valida bundle e assinatura, mantém a
+equipe de assinatura quando existente e restaura o bundle anterior se a substituição
+falhar. No Linux, usa APT com autorização pelo polkit (`pkexec`). O aplicativo
+encerra antes da instalação e reabre como o usuário original, inclusive para
+informar falhas ou cancelamento da autorização. Configurações pendentes são
+resolvidas antes do reinício; histórico e configurações existentes são preservados.
+
+Ao executar pelo código com uv/Git, oferecemos o instalador; o checkout e as
+dependências locais não são alterados. Se faltar suporte à instalação integrada,
+use **Baixar instalador**. As notas da versão e o instalador salvo podem ser
+abertos pela própria seção. Falhas de instalação podem deixar um diagnóstico em
+`update-install.log` no diretório de dados do ClipX.
+
 ## Instaladores e release
 
 O projeto inclui [Docker Compose](compose.yaml) para gerar e testar instaladores Linux

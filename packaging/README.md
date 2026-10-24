@@ -98,10 +98,29 @@ mantenedor; sem ela, o pacote de teste usa um endereço explicitamente inválido
 
 ## Assinatura e notarização Apple
 
-Por padrão, os DMGs de teste usam a assinatura ad-hoc do PyInstaller. **Não são
-notarizados** e podem ser bloqueados pelo Gatekeeper ao serem baixados de outro
-computador. Para distribuição pública sem esse bloqueio, é necessário um certificado
-Developer ID Application e uma conta Apple Developer.
+### Distribuição gratuita (padrão)
+
+Os DMGs usam assinatura ad-hoc do PyInstaller, **sem Developer ID e sem conta paga
+da Apple**. Esse modo também pode ser usado nas releases públicas. Assinatura ad-hoc
+valida a integridade do bundle, mas não identifica o desenvolvedor perante a Apple.
+Os aplicativos não são notarizados e o macOS pode bloquear sua abertura inicial ou
+solicitar autorização novamente após uma atualização.
+
+Para instalar, monte o DMG, arraste ClipX.app para Applications e tente abri-lo.
+Se houver bloqueio e você confiar no instalador obtido nas releases oficiais, abra
+**Ajustes do Sistema → Privacidade e Segurança → Abrir Mesmo Assim** e confirme.
+O arquivo `Instalar.txt` no DMG inclui essas instruções; as releases também informam
+o modo de distribuição. Consulte o [procedimento oficial da Apple](https://support.apple.com/102445).
+
+O atualizador aceita bundles ad-hoc e mantém a validação de checksum, identidade,
+versão e assinatura. Não remove quarentena nem desativa o Gatekeeper. Developer ID
+e notarização são opcionais, fora dos requisitos da distribuição gratuita.
+
+### Developer ID e notarização (opcionais)
+
+Para usar a identidade de desenvolvedor reconhecida pela Apple e notarizar o app,
+é necessário um certificado Developer ID Application e acesso ao Apple Developer
+Program. Esse caminho não é necessário para gerar ou publicar as releases ad-hoc.
 
 Cadastre os seguintes **secrets** no repositório, sem colocar valores no código:
 
@@ -130,6 +149,24 @@ uv run --frozen --group build python tools/release.py macos --notarize
 Assinatura Developer ID e notarização só podem ser verificadas com as credenciais reais;
 o build local ad-hoc não comprova essas etapas. Não há credenciais Apple neste projeto.
 
+## Instalação de atualizações pelo aplicativo
+
+Releases estáveis públicas precisam manter os nomes dos quatro instaladores e
+`SHA256SUMS-{linux|macos}-{amd64|arm64}.txt` produzidos pelo build. A verificação é
+manual pela API pública do GitHub; não existe feed ou token adicional.
+
+O helper `clipx/scripts/updates/supervisor.sh` é incluído explicitamente como recurso de runtime no PyInstaller.
+Ele usa ferramentas do sistema, espera o processo principal encerrar e reabre o
+ClipX como o usuário original. A substituição macOS usa staging no mesmo filesystem
+e rollback do bundle; a instalação DEB usa APT via pkexec. Bibliotecas de runtime
+injetadas pelo PyInstaller são removidas do ambiente dos comandos do sistema.
+O DEB depende de `ca-certificates` e recomenda `pkexec`; sem este último, continua
+disponível o download para instalação manual.
+
+O smoke test verifica helper, página de atualizações sem consulta automática e
+certificados HTTPS. Assinatura Developer ID/notarização continuam dependendo das
+credenciais Apple; a atualização não remove quarentena nem contorna Gatekeeper.
+
 ## Fontes técnicas
 
 - [PyInstaller: builds específicos por sistema](https://pyinstaller.org/en/stable/operating-mode.html)
@@ -149,7 +186,7 @@ Suíte comum: 117 testes, com 106 aprovados/11 ignorados no macOS e 107 aprovado
 ignorados no Linux. Separadamente, os 9 testes nativos macOS passaram. Compose foi
 validado e o workflow passou no actionlint 1.7.12.
 
-As variantes Linux arm64 e macOS Intel estão configuradas na matriz, mas ainda precisam
-da primeira execução nesses runners. O workflow remoto, assinatura Developer ID e
-notarização não foram executados: o repositório ainda não tem remote GitHub configurado
-e as credenciais Apple não foram fornecidas.
+Na validação inicial acima, as variantes Linux arm64/macOS Intel e o workflow remoto
+ainda não haviam sido executados. Posteriormente, a matriz das quatro arquiteturas
+passou no GitHub Actions. Assinatura Developer ID e notarização não são utilizadas
+na distribuição gratuita.

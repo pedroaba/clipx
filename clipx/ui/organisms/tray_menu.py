@@ -48,6 +48,7 @@ class TrayMenu(QMenu):
         self.capture_action.setEnabled(False)
         self.addSeparator()
         self.add_section('Aplicativo')
+        self.updates_action = self.addAction('Verificar atualizações…')
         self.quit_action = self.addAction('Quit')
 
     def add_section(self, title):

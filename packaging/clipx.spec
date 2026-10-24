@@ -11,7 +11,8 @@ if not macos:
     hidden += collect_submodules('Xlib')
 a = Analysis(
     [str(root / 'packaging/entrypoint.py')], pathex=[str(root)],
-    datas=[(str(root / 'clipx/assets'), 'clipx/assets'), *copy_metadata('clipx')],
+    datas=[(str(root / 'clipx/assets'), 'clipx/assets'),
+           (str(root / 'clipx/scripts'), 'clipx/scripts'), *copy_metadata('clipx')],
     hiddenimports=hidden,
     excludes=['tkinter', 'PyQt5', 'PySide2', 'PySide6', 'IPython', 'pytest', 'yaml'],
 )

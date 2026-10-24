@@ -244,8 +244,8 @@ Priority: optional
 Architecture: {arch}
 Maintainer: {maintainer}
 Installed-Size: {installed_size}
-Depends: libc6 (>= 2.39), libglib2.0-0t64, libgssapi-krb5-2, libglib2.0-bin, libgl1, libegl1, libopengl0, libdbus-1-3, libfontconfig1, libfreetype6, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, wl-clipboard, xclip
-Recommends: desktop-file-utils
+Depends: ca-certificates, libc6 (>= 2.39), libglib2.0-0t64, libgssapi-krb5-2, libglib2.0-bin, libgl1, libegl1, libopengl0, libdbus-1-3, libfontconfig1, libfreetype6, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, wl-clipboard, xclip
+Recommends: desktop-file-utils, pkexec
 Suggests: gnome-shell-extension-appindicator, wtype, ydotool
 Description: Histórico local da área de transferência
  Pesquisa, prévia, atalhos e preferências. Python e Qt incluídos.
@@ -298,6 +298,22 @@ def notarize(app):
         run(['xcrun', 'stapler', 'validate', app])
 
 
+def macos_install_instructions(notarized):
+    """Explain the actual installer trust flow without requiring paid signing."""
+    instructions = 'Arraste ClipX.app para Applications.\nRequer macOS 14 ou posterior.\n'
+    if not notarized:
+        instructions += (
+            '\nEste aplicativo não foi notarizado pela Apple.\n'
+            'Se o macOS bloquear a abertura, confira que o instalador veio de\n'
+            'https://github.com/pedroaba/clipx/releases e que você confia nessa origem.\n'
+            'Tente abrir ClipX.app e depois acesse Ajustes do Sistema >\n'
+            'Privacidade e Segurança > Abrir Mesmo Assim. Confirme a abertura.\n'
+            'O macOS pode solicitar nova autorização após uma atualização.\n'
+            '\nOrientações da Apple: https://support.apple.com/102445\n'
+        )
+    return instructions
+
+
 def macos_package(frozen, work, output, notarized):
     """Build, optionally notarize and verify a macOS disk image.
 
@@ -324,7 +340,7 @@ def macos_package(frozen, work, output, notarized):
     stage.mkdir()
     run(['ditto', app, stage / 'ClipX.app'])
     (stage / 'Applications').symlink_to('/Applications')
-    (stage / 'Instalar.txt').write_text('Arraste ClipX.app para Applications.\nRequer macOS 14 ou posterior.\n')
+    (stage / 'Instalar.txt').write_text(macos_install_instructions(notarized))
     artifact = output / f'ClipX-{project_version()}-macos-{architecture()}.dmg'
     retry_run(['hdiutil', 'create', '-volname', 'ClipX', '-srcfolder', stage, '-format', 'UDZO', '-ov', artifact])
     if os.environ.get('MACOS_SIGNING_IDENTITY'):

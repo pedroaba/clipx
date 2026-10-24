@@ -73,6 +73,9 @@ def run_gui(start_hidden=False):
     tray = ClipXTray(storage, window, app)
     instance.listen(tray.open_search)
     tray.show()
+    tray.updates.restore_install_result()
+    if tray.updates.install_result:
+        QTimer.singleShot(0, lambda: tray.open_preferences('updates'))
     if not start_hidden:
         tray.open_search(activation_token=activation_token)
 

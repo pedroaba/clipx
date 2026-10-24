@@ -90,6 +90,34 @@ class PreferencesTests(unittest.TestCase):
         """
         self.page.controls[key].setCurrentIndex(self.page.controls[key].findData(value))
 
+    def test_update_section_keeps_drafts_and_has_no_reset_or_implicit_check(self):
+        """Updates are immediate actions outside the preference transaction."""
+        service = self.page.updates_page.service
+        with patch.object(service, 'check') as check:
+            self.choose('theme', 'light')
+            self.page.select_section('updates')
+            self.assertTrue(self.page.footer.reset.isHidden())
+            self.page.restore_section()
+            self.assertEqual(self.page.ui_draft()['theme'], 'light')
+            self.assertTrue(self.page.dirty())
+            self.assertEqual(self.page.stack.currentWidget(), self.page.pages['updates'])
+            check.assert_not_called()
+            self.page.select_section('appearance')
+            self.assertFalse(self.page.footer.reset.isHidden())
+
+    def test_restart_resolves_pending_preferences_and_save_failures(self):
+        self.assertTrue(self.page.prepare_update_restart())
+        self.choose('theme', 'light')
+        with patch.object(QMessageBox, 'exec'), patch.object(QMessageBox, 'clickedButton', return_value=None):
+            self.assertFalse(self.page.prepare_update_restart())
+        def apply_choice(box):
+            return box.buttons()[0]
+        with patch.object(QMessageBox, 'exec'), patch.object(QMessageBox, 'clickedButton', apply_choice):
+            with patch.object(self.page, 'persist_settings', side_effect=OSError('disk full')):
+                self.assertFalse(self.page.prepare_update_restart())
+            self.assertTrue(self.page.prepare_update_restart())
+        self.assertEqual(self.window.preferences['theme'], 'light')
+
     def test_draft_survives_navigation_and_apply_keeps_dialog_open(self):
         """Drafts survive section switches and Apply updates live state without closing."""
         self.page.show()

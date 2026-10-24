@@ -1,19 +1,39 @@
 """Regression checks for frozen subprocesses and release inputs."""
 import hashlib
+import io
 import os
 from pathlib import Path
 import sys
+import runpy
 import tempfile
 import unittest
 from unittest.mock import patch
 from clipx.processes import module_command
 from clipx.platforms.linux.clipboard import LinuxClipboardDriver
 from clipx.platforms.macos.clipboard import MacOSClipboardDriver
-from tools.release import architecture, checksums, project_version, validate_tag
+from tools.release import (architecture, checksums, project_version, validate_tag,
+                           macos_install_instructions, notarize)
 
 
 class ReleaseTests(unittest.TestCase):
     """Verify frozen command construction, version tags and release artifacts."""
+
+    def test_macos_instructions_explain_unnotarized_install_and_optional_signing(self):
+        instructions = macos_install_instructions(False)
+        self.assertIn('Abrir Mesmo Assim', instructions)
+        self.assertIn('https://github.com/pedroaba/clipx/releases', instructions)
+        self.assertNotIn('Abrir Mesmo Assim', macos_install_instructions(True))
+
+    def test_adhoc_signing_needs_no_certificate_or_keychain_commands(self):
+        root = Path(__file__).resolve().parents[1]
+        script = runpy.run_path(str(root / 'packaging/macos/signing.py'))
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'RUNNER_TEMP': folder}, clear=True), patch.object(sys, 'argv', ['signing.py']), patch('subprocess.run', side_effect=AssertionError('Ad-hoc must not import certificates')), patch('sys.stdout', new_callable=io.StringIO) as output:
+            script['main']()
+            self.assertIn('sem Developer ID', output.getvalue())
+            self.assertEqual(list(Path(folder).iterdir()), [])
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Notarização requer'):
+                notarize(Path('/unused/ClipX.app'))
 
     def test_source_worker_keeps_python_module_command(self):
         """In a source checkout the worker launches through the current Python module."""

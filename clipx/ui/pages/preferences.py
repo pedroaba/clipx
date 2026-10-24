@@ -122,11 +122,11 @@ class PreferencesDialog(ShortcutsDialog):
         nav.setFixedWidth(198)
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(12, 20, 12, 12)
-        for key, label in [(k, v[0]) for k, v in SECTIONS.items()] + [('shortcuts', 'Atalhos')]:
+        for key, label in [(k, v[0]) for k, v in SECTIONS.items()] + [('shortcuts', 'Atalhos'), ('updates', 'Atualizações')]:
             button = QPushButton(label)
             button.setObjectName('NavigationItem')
             button.setProperty('lucideIcon', {'appearance': 'palette', 'content': 'panels-top-left',
-                                              'window': 'app-window', 'shortcuts': 'keyboard'}[key])
+                                              'window': 'app-window', 'shortcuts': 'keyboard', 'updates': 'loader-circle'}[key])
             button.toggled.connect(lambda checked, item=button: refresh_lucide_button(item, self.window.preferences))
             button.setMinimumHeight(40)
             button.setCheckable(True)
@@ -209,6 +209,14 @@ class PreferencesDialog(ShortcutsDialog):
             scroll.setWidget(page)
             self.stack.addWidget(scroll)
             self.pages[key] = scroll
+        from clipx.updates import update_service
+        from clipx.ui.organisms.update_page import UpdatePage
+        self.updates_page = UpdatePage(update_service())
+        updates_scroll = QScrollArea()
+        updates_scroll.setWidgetResizable(True)
+        updates_scroll.setWidget(self.updates_page)
+        self.stack.addWidget(updates_scroll)
+        self.pages['updates'] = updates_scroll
         self.footer.reset.clicked.disconnect()
         self.buttons.accepted.disconnect()
         self.buttons.rejected.disconnect()
@@ -282,6 +290,7 @@ class PreferencesDialog(ShortcutsDialog):
         if self.controller.paused_binding is not None:
             return
         self.section = name
+        self.footer.reset.setVisible(name != 'updates')
         self.stack.setCurrentWidget(self.surface if name == 'shortcuts' else self.pages[name])
         for key, button in self.navigation.items():
             button.setChecked(key == name)
@@ -289,12 +298,37 @@ class PreferencesDialog(ShortcutsDialog):
 
     def restore_section(self):
         """Restore defaults for the current section, without saving them."""
+        if self.section == 'updates':
+            return
         if self.section == 'shortcuts':
             self.controller.restore_defaults()
         else:
             for key, *_ in SECTIONS[self.section][1]:
                 self.controls[key].setCurrentIndex(self.controls[key].findData(DEFAULT_UI[key]))
         self.update_pending()
+
+    def prepare_update_restart(self):
+        """Resolve drafts just before the detached installer takes ownership."""
+        self.controller.stop_recording()
+        if self.controller.paused_binding is not None:
+            return False
+        if not self.dirty():
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle('Atualizar o ClipX')
+        box.setText('Aplicar as alterações nas configurações antes de atualizar e reiniciar?')
+        apply_button = box.addButton('Aplicar e atualizar', QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton('Descartar e atualizar', QMessageBox.ButtonRole.DestructiveRole)
+        keep = box.addButton('Continuar editando', QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep)
+        from clipx.ui.templates.window import customize_message_box
+        customize_message_box(box)
+        apply_surface(box, self.window.preferences, PREFERENCES_QSS)
+        box.exec()
+        if box.clickedButton() is apply_button:
+            self.apply_changes()
+            return not self.dirty()
+        return box.clickedButton() is discard
 
     def persist_settings(self, shortcuts):
         """Persist the UI draft together with the validated shortcuts.

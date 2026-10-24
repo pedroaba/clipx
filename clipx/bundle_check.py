@@ -73,6 +73,10 @@ def main():
         else:
             from Xlib import display
         assert ICON_PATH.is_file(), 'Brand icon missing from bundle'
+        from clipx import update_install
+        assert (Path(update_install.__file__).parent / 'scripts/updates/supervisor.sh').is_file(), 'Update helper missing from bundle'
+        from clipx.updates import tls_context
+        assert tls_context().get_ca_certs(), 'HTTPS certificate store unavailable'
         install_fonts()
         platform = SimpleNamespace(name='test', effects=OpaqueWindowEffects(), clipboard=object(), desktop=object())
         window = ClipXMainWindow(storage, ShortcutSettings(root / 'settings.json'), platform)
@@ -124,6 +128,9 @@ def main():
                 return []
         dialog = PreferencesDialog(window, Shortcuts())
         assert not dialog.windowIcon().isNull(), 'Application icon unavailable'
+        dialog.select_section('updates')
+        assert dialog.updates_page.service.worker is None, 'Updates must remain manual'
+        assert dialog.footer.reset.isHidden(), 'Updates has no resettable settings'
         for theme in ('dark', 'light'):
             window.apply_preferences({**window.preferences, 'theme': theme})
             app.processEvents()
@@ -131,7 +138,7 @@ def main():
         dialog.cancel_changes()
         window.close()
         print(json.dumps({'ok': True, 'platform': sys.platform, 'frozen': bool(getattr(sys, 'frozen', False)),
-                          'checks': ['capture-subprocess', 'sqlite', 'local-socket', 'native-driver-import', 'Qt-offscreen', 'fonts', 'icons', 'preferences', 'themes']}))
+                          'checks': ['capture-subprocess', 'sqlite', 'local-socket', 'native-driver-import', 'Qt-offscreen', 'fonts', 'icons', 'preferences', 'themes', 'updates-helper', 'updates-page']}))
     return 0
 
 

@@ -110,6 +110,19 @@ com 120 textos fictícios e 100 resultados visíveis, oito consultas progressiva
 caíram de 45–77 ms por atualização para 1,6–1,9 ms, incluindo processEvents offscreen
 sob cProfile. Essa medição descreve a fixture; não é garantia para qualquer histórico.
 
+## Atualizações
+
+`organisms/update_page.py` apresenta o estado do serviço compartilhado em
+`clipx/updates.py`. `pages/preferences.py` adiciona a navegação Atualizações,
+oculta Restaurar seção e resolve rascunhos antes de reiniciar. A página não
+participa do rascunho de configurações e não consulta a rede ao abrir.
+
+`controllers/tray.py` conecta Verificar atualizações à página e à consulta
+explícita, além de coordenar a instalação após validar configurações pendentes.
+O serviço pertence à QApplication: fechar o diálogo não interrompe operações.
+Rede e validações executam em QThread com sinais de progresso/estado para a UI;
+`clipx/update_install.py` prepara instaladores e inicia o helper separado.
+
 ## Identidade do aplicativo
 
 `foundations/branding.py` fornece o PNG do projeto para janelas e QApplication,
