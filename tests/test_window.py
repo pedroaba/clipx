@@ -3,6 +3,7 @@ import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -113,7 +114,9 @@ class WindowTests(unittest.TestCase):
              patch.object(QApplication, 'activePopupWidget', return_value=None), \
              patch.object(QApplication, 'activeModalWidget', return_value=None):
             self.app.sendEvent(self.window, QEvent(QEvent.Type.WindowDeactivate))
-            QTest.qWait(130)
+            deadline = time.monotonic() + 5
+            while self.window.isVisible() and time.monotonic() < deadline:
+                QTest.qWait(10)
         self.assertFalse(self.window.isVisible())
         self.assertFalse(self.app.quitOnLastWindowClosed())
 

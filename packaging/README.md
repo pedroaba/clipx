@@ -44,7 +44,7 @@ do menu. Não modifica atalhos, serviços ou preferências de usuários durante 
 Para instalar em um desktop Ubuntu/Debian compatível:
 
 ```bash
-sudo apt install ./dist/clipx_0.1.1_amd64.deb
+sudo apt install ./dist/clipx_0.1.2_amd64.deb
 clipx
 ```
 
@@ -88,7 +88,7 @@ Para uma versão nova:
 
 1. Altere `project.version` em `pyproject.toml` e execute `uv lock`.
 2. Faça commit e push; a versão do aplicativo é lida dos metadados do pacote.
-3. Crie e envie uma tag idêntica, por exemplo `v0.1.1` para a versão `0.1.1`.
+3. Crie e envie uma tag idêntica, por exemplo `v0.1.2` para a versão `0.1.2`.
 4. Acompanhe **Actions → Build installers and release**.
 
 Tags divergentes da versão interrompem o build. Reexecutar a publicação de uma release
