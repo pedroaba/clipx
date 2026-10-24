@@ -6,7 +6,6 @@ import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 from pathlib import Path
 import plistlib
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -298,10 +297,13 @@ class NativeInstallTests(unittest.TestCase):
                 root = Path(folder)
                 current = root / 'Installed ClipX.app'
                 staged = root / 'New ClipX.app'
-                for app, version, binary in ((current, '0.9.0', '/usr/bin/true'), (staged, '0.10.0', '/usr/bin/true' if succeeds else '/usr/bin/false')):
+                for app, version, exit_code in ((current, '0.9.0', 0), (staged, '0.10.0', 0 if succeeds else 1)):
                     (app / 'Contents/MacOS').mkdir(parents=True)
-                    shutil.copyfile(binary, app / 'Contents/MacOS/clipx')
-                    (app / 'Contents/MacOS/clipx').chmod(0o755)
+                    # Re-signing copied Apple platform binaries can be rejected by
+                    # AMFI on older macOS runners. Build an ordinary app executable.
+                    subprocess.run(['cc', '-x', 'c', '-', '-o', str(app / 'Contents/MacOS/clipx')],
+                                   input=f'int main(void) {{ return {exit_code}; }}\n',
+                                   text=True, check=True, capture_output=True)
                     with (app / 'Contents/Info.plist').open('wb') as stream:
                         plistlib.dump({'CFBundleIdentifier': 'org.clipx.ClipX', 'CFBundleVersion': version,
                                        'CFBundleShortVersionString': version, 'CFBundleExecutable': 'clipx', 'CFBundlePackageType': 'APPL'}, stream)
