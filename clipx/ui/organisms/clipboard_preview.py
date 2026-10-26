@@ -1,13 +1,14 @@
-"""Text-only preview: content is escaped or supplied as plain text.
+"""Preview text safely and decode referenced images in background workers.
 
 The pane renders clips as escaped HTML or plain text, never as raw markup, and
 switches between text, color, code and URL presentations through a stacked
-widget. Syntax highlighting is optional and degrades to plain text on failure.
+widget. Image workers revalidate file identity independently of database rows.
+Syntax highlighting is optional and degrades to plain text on failure.
 """
 import html
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, QThreadPool
+from PyQt6.QtGui import QColor, QFont, QPixmap
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget, QSizePolicy
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name, guess_lexer
@@ -16,7 +17,7 @@ from clipx.utils import format_relative_time
 
 
 class PreviewPaneWidget(QFrame):
-    """Preview pane for the selected clip, with text, color and empty pages.
+    """Preview pane for the selected clip, with text, color, image and empty pages.
 
     Attributes:
         preferences (dict): UI preferences controlling font size, scale,
@@ -26,7 +27,7 @@ class PreviewPaneWidget(QFrame):
         type_badge (QLabel): Badge with the clip type or language.
         time_label (QLabel): Relative timestamp of the clip.
         stats_label (QLabel): Line, character and word counts.
-        stack (QStackedWidget): Holds the text, color and empty pages.
+        stack (QStackedWidget): Holds the text, color, image and empty pages.
         text_browser (QTextBrowser): Renderer for text, code and URL content.
         color_swatch (QFrame): Solid swatch for color clips.
         color_details (QTextBrowser): Hex and RGB details for color clips.
@@ -43,6 +44,11 @@ class PreviewPaneWidget(QFrame):
         self.setObjectName('PreviewPane')
         self.preferences = {}
         self.current_item = None
+        self._image_token = 0
+        self._image_busy = None
+        self._image_signature = None
+        self._image_pixmap = None
+        self._image_tasks = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(12)
@@ -78,12 +84,35 @@ class PreviewPaneWidget(QFrame):
         self.empty_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_page.setWordWrap(True)
         self.stack.addWidget(self.empty_page)
+        self.image_page = QWidget()
+        image_layout = QVBoxLayout(self.image_page)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setWordWrap(True)
+        self.image_label.setObjectName('Secondary')
+        self.image_label.setMinimumSize(1, 1)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.image_label.setAccessibleName('Prévia da imagem selecionada')
+        image_layout.addWidget(self.image_label, 1)
+        self.image_path = QLabel()
+        self.image_path.setTextFormat(Qt.TextFormat.PlainText)
+        self.image_path.setWordWrap(False)
+        self.image_path.setMinimumWidth(0)
+        self.image_path.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.image_path.setObjectName('Secondary')
+        self.image_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        image_layout.addWidget(self.image_path)
+        self.stack.addWidget(self.image_page)
         layout.addWidget(self.stack, 1)
         self.show_empty()
 
     def show_empty(self):
         """Clear the pane and display the empty page."""
         self.current_item = None
+        self._invalidate_image()
+        self._image_signature = None
+        self._image_pixmap = None
         self.type_badge.hide()
         self.stats_label.clear()
         self.time_label.clear()
@@ -100,6 +129,27 @@ class PreviewPaneWidget(QFrame):
             item (object): Clip record with ``type``, ``content``, ``language``,
                 ``line_count``, ``char_count`` and ``updated_at`` attributes.
         """
+        if item.type == 'image':
+            if self.current_item != item:
+                self._invalidate_image()
+                self._image_signature = None
+                self._image_pixmap = None
+                self.image_label.clear()
+                self.image_label.setText('Carregando…')
+                self.stats_label.clear()
+            self.current_item = item
+            self.type_badge.show()
+            self.type_badge.setText('IMAGEM')
+            self.time_label.setText(format_relative_time(item.updated_at))
+            self.image_path.setToolTip(item.content)
+            self.image_path.setAccessibleName(item.content)
+            self._elide_image_path()
+            self.stack.setCurrentWidget(self.image_page)
+            self.refresh_image()
+            return
+        if self.current_item is not None and self.current_item.type == 'image':
+            self._invalidate_image()
+            self._image_pixmap = None
         if self.current_item == item and getattr(self, '_rendered_preferences', None) == self.preferences:
             return
         self._rendered_preferences = self.preferences.copy()
@@ -146,3 +196,67 @@ class PreviewPaneWidget(QFrame):
             self.text_browser.setHtml(f'<p style="color:{secondary}">URL</p><a style="color:{link_color}" href="{url}">{url}</a>')
         else:
             self.text_browser.setPlainText(item.content)
+
+    def refresh_image(self):
+        """Schedule a filesystem check even when the database row is unchanged."""
+        if self.current_item is None or self.current_item.type != 'image' or self.isHidden():
+            return
+        if self._image_busy == self._image_token:
+            return
+        from clipx.ui.models.image_preview import ImagePreviewTask
+        token = self._image_token
+        task = ImagePreviewTask(token, self.current_item.content, self._image_signature)
+        task.signals.ready.connect(self._image_ready)
+        self._image_tasks[token] = task
+        self._image_busy = token
+        QThreadPool.globalInstance().start(task)
+
+    def _image_ready(self, token, result):
+        """Accept only the current selection's worker result on the UI thread."""
+        self._image_tasks.pop(token, None)
+        if self._image_busy == token:
+            self._image_busy = None
+        if token != self._image_token or self.current_item is None or self.current_item.type != 'image':
+            return
+        if result.get('unchanged') or result.get('cancelled'):
+            return
+        if 'error' in result:
+            self._image_signature = None
+            self._image_pixmap = None
+            self.image_label.clear()
+            self.image_label.setText(result['error'])
+            self.stats_label.setText('Imagem indisponível')
+            return
+        from clipx.images import image_title
+        self._image_signature = result['signature']
+        self._image_pixmap = QPixmap.fromImage(result['image'])
+        dimensions = result['dimensions']
+        self.stats_label.setText(f'{image_title(self.current_item)} · {dimensions.width()} × {dimensions.height()} px · {result["size"] / 1024:.1f} KB')
+        self._scale_image()
+        self._elide_image_path()
+
+    def _scale_image(self):
+        """Fit the cached preview into the available area without cropping."""
+        if self._image_pixmap is not None:
+            self.image_label.setPixmap(self._image_pixmap.scaled(
+                self.image_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        """Resize the displayed bitmap without decoding the file again."""
+        super().resizeEvent(event)
+        self._scale_image()
+        self._elide_image_path()
+
+    def _elide_image_path(self):
+        """Keep long source paths from consuming the bitmap's preview area."""
+        if self.current_item is not None and self.current_item.type == 'image':
+            self.image_path.setText(self.image_path.fontMetrics().elidedText(
+                self.current_item.content, Qt.TextElideMode.ElideMiddle,
+                max(40, self.image_path.width())))
+
+    def _invalidate_image(self):
+        """Skip queued decodes belonging to a selection that is no longer active."""
+        self._image_token += 1
+        for task in self._image_tasks.values():
+            task.cancelled.set()

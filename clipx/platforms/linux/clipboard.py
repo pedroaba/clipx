@@ -67,7 +67,7 @@ class LinuxClipboardDriver:
         capture = module_command("clipx.capture", database)
         if os.environ.get("DISPLAY"):
             return capture + ["--watch-x11"]
-        return ["wl-paste", "--type", "text", "--watch", *capture]
+        return ["wl-paste", "--no-newline", "--watch", *capture, "--wayland-event"]
 
     def write_text(self, text):
         """Copy text to the system clipboard.
@@ -81,6 +81,23 @@ class LinuxClipboardDriver:
         if copy_to_clipboard(text):
             return Result()
         return Result(Status.ERROR, "Não foi possível copiar. Verifique wl-copy/xclip e a sessão gráfica.")
+
+    def write_image(self, data):
+        """Publish PNG data with an explicit MIME type using the session tool."""
+        candidates = [('wl-copy', ['--type', 'image/png']),
+                      ('xclip', ['-selection', 'clipboard', '-target', 'image/png'])]
+        if os.environ.get('DISPLAY'):
+            candidates.reverse()
+        for tool, args in candidates:
+            if not shutil.which(tool):
+                continue
+            try:
+                process = subprocess.run([tool, *args], input=data, timeout=2, check=False)
+                if process.returncode == 0:
+                    return Result()
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return Result(Status.ERROR, 'Não foi possível copiar a imagem. Verifique wl-copy/xclip e a sessão gráfica.')
 
     def start_observation(self, capture, stopped, report):
         """Watch the clipboard until the stop event is set.
@@ -127,3 +144,37 @@ class LinuxClipboardDriver:
         """Signal the stored stop event, if an observation is active."""
         if self._stopped is not None:
             self._stopped.set()
+
+
+def capture_wayland_event(capture):
+    """Read a watch event, preferring file references over image bytes.
+
+    The watch payload is checked against a fresh default read after fetching
+    typed data, so a concurrent clipboard replacement is discarded.
+    """
+    from clipx.images import ImageError
+    if os.environ.get('CLIPBOARD_STATE') in ('nil', 'clear', 'sensitive'):
+        capture.reset()
+        return 0
+    original = sys.stdin.buffer.read()
+    try:
+        offered = subprocess.check_output(['wl-paste', '--list-types'], timeout=2).decode().splitlines()
+        preferred = next((mime for mime in ('text/uri-list', 'x-special/gnome-copied-files',
+                                            'image/png', 'image/jpeg', 'image/tiff', 'image/bmp',
+                                            'image/gif', 'image/webp', 'image/heic', 'image/heif',
+                                            'image/svg+xml', 'image/x-icon')
+                          if mime in offered), None)
+        if preferred:
+            data = subprocess.check_output(['wl-paste', '--no-newline', '--type', preferred], timeout=2)
+            current = subprocess.check_output(['wl-paste', '--no-newline'], timeout=2)
+            if current == original:
+                capture.save_mime(preferred, data)
+        elif any(mime.startswith('text/') or mime in ('UTF8_STRING', 'STRING') for mime in offered):
+            # Preserve whitespace exactly, without wl-paste newline decoration.
+            data = subprocess.check_output(['wl-paste', '--no-newline'], timeout=2)
+            if subprocess.check_output(['wl-paste', '--no-newline'], timeout=2) == original:
+                capture.save_mime('text/plain', data)
+    except (OSError, subprocess.SubprocessError, ImageError) as exc:
+        import json
+        print(json.dumps({'status': 'error', 'message': f'Não foi possível capturar o clipboard: {exc}'}), flush=True)
+    return 0

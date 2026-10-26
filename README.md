@@ -38,17 +38,25 @@ O launcher `./bin/clipx` também funciona por link simbólico e fora da pasta do
 
 ## Funcionalidades
 
-- Histórico de texto, código, JSON, links e cores; pesquisa e prévia com destaque de sintaxe.
+- Histórico de texto, código, JSON, links, cores e imagens; pesquisa, filtros e prévia.
 - Deduplicação por SHA-256 e SQLite local; até 500 itens não fixados, além dos fixados.
 - Até 100 resultados por busca; seleção e rolagem preservadas durante atualizações.
-- Janela de 880 × 540, mínimo de 720 × 460, divisor ajustável e posicionamento na tela do cursor.
+- Janela de 880 × 540, mínimo de 720 × 460 a 100% (acompanha escalas maiores), divisor ajustável e posicionamento na tela do cursor.
 - Menu **Ações** para copiar e colar, copiar apenas, fixar/desafixar e excluir.
 - Bandeja/barra de menus com os cinco clips mais recentes, preferências, atalhos e estado da captura.
 - Preferências de tema claro/escuro/sistema, escala, densidade, lista, prévia e comportamento da janela, aplicadas sem reinício.
 - Instância única: chamar `clipx show` reabre a instância existente.
 - Falha de cópia mantém a pesquisa aberta; indisponibilidade e permissões aparecem na interface.
 
-O histórico desta versão é **exclusivamente textual**. Imagens, arquivos, texto rico e sincronização não estão incluídos.
+### Imagens
+
+Ao copiar arquivos de imagem, o ClipX guarda apenas seus caminhos absolutos no banco. Uma seleção com várias imagens cria uma entrada para cada uma; outros arquivos são ignorados. O preview e a cópia usam a versão atual do arquivo. Se ele for movido ou excluído, o preview informa a indisponibilidade; tentar copiar abre um alerta no tema da aplicação, sem fechar a pesquisa ou tentar colar.
+
+Screenshots e imagens do navegador podem chegar apenas como pixels. Nesse caso, o ClipX salva um PNG deduplicado em `images/`, ao lado de `history.db`, e registra somente o caminho. Excluir ou limpar o histórico libera esses arquivos próprios; arquivos originais nunca são apagados. Fixados continuam protegidos da limpeza padrão e do limite do histórico.
+
+A recuperação publica os pixels da imagem, sem copiar seu caminho como texto ou oferecer o arquivo para colar em pastas. O aplicativo de destino precisa aceitar imagens. Formatos dependem dos decodificadores Qt instalados; imagens animadas usam o primeiro quadro. Não há busca automática por arquivos movidos, captura por monitoramento de pastas, download remoto, OCR ou edição.
+
+Outros tipos de arquivo, texto rico e sincronização não estão incluídos.
 
 ## macOS
 
@@ -62,13 +70,13 @@ uv run clipx tray   # Inicia com a pesquisa escondida
 
 O atalho global padrão é **⌘⇧V**. Ele é registrado apenas enquanto o aplicativo está rodando e pode ser alterado em **Atalhos** na barra de menus. O registro usa Carbon/HIToolbox, sem monitoramento global de todas as teclas. Se a combinação não puder ser registrada, a anterior é preservada; o ClipX não transfere atalhos do macOS.
 
-A captura consulta `NSPasteboard.changeCount` a cada aproximadamente **250 ms**, lendo texto somente quando o contador muda. Funciona com a janela escondida. Alterações intermediárias sobrescritas entre verificações podem não ser capturadas. Conteúdo marcado como confidencial, transitório ou gerado automaticamente é ignorado, assim como as escritas do próprio ClipX. Esses marcadores dependem do aplicativo de origem: não representam uma garantia de detecção de todo conteúdo sensível.
+A captura consulta `NSPasteboard.changeCount` a cada aproximadamente **250 ms**, lendo conteúdo somente quando o contador muda. Funciona com a janela escondida. Alterações intermediárias sobrescritas entre verificações podem não ser capturadas. Conteúdo marcado como confidencial, transitório ou gerado automaticamente é ignorado, assim como as escritas do próprio ClipX. Esses marcadores dependem do aplicativo de origem: não representam uma garantia de detecção de todo conteúdo sensível.
 
 ### Colagem e permissões
 
-Selecionar um item copia o texto e tenta colar no aplicativo que estava ativo antes da pesquisa. O ClipX confirma o foco no destino antes de enviar **⌘V** e desiste após 1 segundo se não conseguir ativá-lo.
+Acionar “Copiar e colar” copia o conteúdo selecionado e tenta colar no aplicativo que estava ativo antes da pesquisa. O ClipX confirma o foco no destino antes de enviar **⌘V** e desiste após 1 segundo se não conseguir ativá-lo.
 
-A colagem automática requer a autorização de Acessibilidade/controle do macOS. Sem ela, o texto continua copiado e pode ser colado manualmente. Use **Autorizar colagem no macOS** na barra de menus para abrir a solicitação nativa; o aplicativo não repete solicitações automaticamente. Restrições de leitura do clipboard também são respeitadas e aparecem como estado de captura.
+A colagem automática requer a autorização de Acessibilidade/controle do macOS. Sem ela, o conteúdo continua copiado e pode ser colado manualmente. Use **Autorizar colagem no macOS** na barra de menus para abrir a solicitação nativa; o aplicativo não repete solicitações automaticamente. Restrições de leitura do clipboard também são respeitadas e aparecem como estado de captura.
 
 Ao executar por uv, a autorização pode ficar associada ao interpretador Python ou ao aplicativo lançador, e pode precisar ser revista quando o interpretador mudar. O empacotamento gera bundle `.app` e DMG; assinatura Developer ID e notarização dependem dos secrets Apple descritos em [Builds e releases](packaging/README.md). Inicialização automática no login não está incluída.
 
@@ -147,6 +155,7 @@ Os atalhos da pesquisa são configuráveis e escolhas existentes são preservada
 | Dado | Linux | macOS |
 | --- | --- | --- |
 | Histórico | `~/.local/share/clipx/history.db` | `~/Library/Application Support/ClipX/history.db` |
+| Imagens gerenciadas | `~/.local/share/clipx/images/` | `~/Library/Application Support/ClipX/images/` |
 | Preferências | `~/.config/clipx/settings.json` | `~/Library/Preferences/ClipX/settings.json` |
 | Runtime | `$XDG_RUNTIME_DIR` ou `/tmp/clipx-runtime-UID` | `/tmp/clipx-runtime-UID` |
 

@@ -1,4 +1,4 @@
-"""Shared text ingestion and native capture worker entrypoint.
+"""Shared text and image ingestion and native capture worker entrypoint.
 
 ``ClipboardCapture`` deduplicates and persists text, while ``main`` provides the
 worker command invoked by platform clipboard drivers or directly from stdin.
@@ -18,7 +18,7 @@ logger = logging.getLogger("clipx.capture")
 
 
 class ClipboardCapture:
-    """Persist clipboard text while suppressing consecutive duplicates.
+    """Persist clipboard text, image references and image pixels.
 
     The capture keeps the hash of the last saved content so repeated listener
     events for the same text do not create extra history updates.
@@ -51,6 +51,7 @@ class ClipboardCapture:
         Args:
             text (str): Clipboard text to store.
         """
+        self.storage.clear_image_write()
         if not text or not text.strip():
             self._last_hash = None
             return
@@ -60,6 +61,39 @@ class ClipboardCapture:
         detection = ContentDetector.detect(text)
         self.storage.add_clip(text, detection.clip_type, detection.language)
         self._last_hash = content_hash
+
+    def save_files(self, paths):
+        """Capture one entry per readable local image in a file selection."""
+        from clipx.images import ImageError
+        self.reset()
+        self.storage.clear_image_write()
+        for path in dict.fromkeys(paths):
+            try:
+                self.storage.add_image(path)
+            except ImageError:
+                continue
+
+    def save_image(self, data):
+        """Capture pixels unless they echo a recent ClipX image write."""
+        from clipx.images import read_image
+        image, _, _ = read_image(data)
+        if not self.storage.is_image_echo(image):
+            self.storage.clear_image_write()
+            self.storage.add_image(data)
+        self.reset()
+
+    def save_mime(self, mime, data):
+        """Route a native payload by its advertised MIME type."""
+        if mime in ('text/uri-list', 'x-special/gnome-copied-files'):
+            from PyQt6.QtCore import QUrl
+            lines = data.decode('utf-8', errors='replace').splitlines()
+            paths = [url.toLocalFile() for line in lines
+                     if not line.startswith('#') and (url := QUrl(line)).isLocalFile()]
+            self.save_files(paths)
+        elif mime.startswith('image/'):
+            self.save_image(data)
+        else:
+            self.save(data.decode('utf-8', errors='replace'))
 
 
 
@@ -80,8 +114,12 @@ def main():
     parser.add_argument("database", type=Path)
     parser.add_argument("--watch-x11", action="store_true")
     parser.add_argument("--watch-macos", action="store_true")
+    parser.add_argument("--wayland-event", action="store_true")
     args = parser.parse_args()
     capture = ClipboardCapture(Storage(args.database))
+    if args.wayland_event:
+        from clipx.platforms.linux.clipboard import capture_wayland_event
+        return capture_wayland_event(capture)
     if args.watch_x11:
         from clipx.platforms.linux.capture import watch_x11
         return watch_x11(capture)

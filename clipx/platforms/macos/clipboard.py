@@ -86,6 +86,31 @@ class MacOSClipboardDriver:
             self._last_change = count
             capture.reset()
             return Result()
+        # Prefer paths to avoid duplicating files that already exist.
+        if 'public.file-url' in types or 'NSFilenamesPboardType' in types:
+            from Foundation import NSURL
+            paths = []
+            if 'public.file-url' in types:
+                urls = board.readObjectsForClasses_options_([NSURL], None) or ()
+                paths = [str(url.path()) for url in urls if url.isFileURL()]
+            if not paths and 'NSFilenamesPboardType' in types:
+                paths = list(board.propertyListForType_('NSFilenamesPboardType') or ())
+            if board.changeCount() != count:
+                return None
+            self._last_change = count
+            capture.save_files(paths)
+            return Result()
+        for image_type in ('public.png', 'public.tiff', 'public.jpeg', 'com.compuserve.gif',
+                           'org.webmproject.webp', 'public.heic', 'public.heif', 'com.microsoft.bmp'):
+            if image_type not in types:
+                continue
+            data = board.dataForType_(image_type)
+            if board.changeCount() != count:
+                return None
+            self._last_change = count
+            if data is not None:
+                capture.save_image(bytes(data))
+            return Result()
         text = board.stringForType_(TEXT_TYPE)
         if board.changeCount() != count:
             return None  # Retry the new generation, never persist an inconsistent read.
@@ -121,6 +146,27 @@ class MacOSClipboardDriver:
             return Result()
         except Exception as exc:
             return Result(Status.ERROR, f'Não foi possível copiar: {exc}')
+
+    def write_image(self, data):
+        """Write PNG pixels and the private ClipX marker to the pasteboard."""
+        try:
+            import objc
+            with objc.autorelease_pool():
+                from Foundation import NSData
+                from AppKit import NSPasteboardItem
+                board = self.pasteboard
+                native = NSData.dataWithBytes_length_(data, len(data))
+                item = NSPasteboardItem.alloc().init()
+                if not item.setData_forType_(native, 'public.png') or not item.setString_forType_('ClipX', SELF_TYPE):
+                    return Result(Status.ERROR, 'Não foi possível preparar a imagem no pasteboard.')
+                board.clearContents()
+                # Publish the marker and pixels together so an observer cannot
+                # see an intermediate unmarked image and capture its own write.
+                if not board.writeObjects_([item]):
+                    return Result(Status.ERROR, 'O macOS não confirmou a cópia da imagem.')
+                return Result()
+        except Exception as exc:
+            return Result(Status.ERROR, f'Não foi possível copiar a imagem: {exc}')
 
     def start_observation(self, capture, stopped, report):
         """Poll the pasteboard until `stopped` is set.

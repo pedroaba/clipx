@@ -134,3 +134,56 @@ pelo adaptador `platforms/dock.py`. No macOS, o processo assume a política Regu
 quando há um diálogo visível e volta a Accessory após fechar o último, mantendo a
 pesquisa como utilitário da barra de menus. O teste nativo cobre múltiplos diálogos.
 O instalador Linux aponta o arquivo desktop para o ícone local do projeto.
+
+
+## Imagens no histórico
+
+`clipx/images.py` centraliza decodificação do primeiro quadro, mensagens de falha,
+identidade dos pixels e conversão para PNG. `clipx/storage.py` migra a propriedade
+do arquivo (`external`/`managed`), referencia originais e grava PNGs sem origem em
+`images/`, ao lado do banco. Um registro `managed_images` identifica exclusivamente os arquivos criados pelo
+ClipX e reserva seus caminhos antes da gravação, permitindo recuperar interrupções.
+Um lock de arquivo coordena processos; a limpeza após
+commit ou rollback remove temporários interrompidos e PNGs próprios sem referências.
+O banco guarda caminhos, propriedade e hashes, sem imagens ou thumbnails.
+
+`ui/models/image_preview.py` faz stat e decodificação limitada em QRunnable.
+`PreviewPaneWidget` revalida a seleção no timer existente, inclusive quando a linha
+do banco não mudou, e descarta respostas de seleções antigas. Mudanças de arquivo,
+permissões e restauração invalidam o cache. O pixmap existe apenas na memória e se
+ajusta sem recorte; o caminho é abreviado visualmente, com tooltip completo.
+
+`ClipboardService.copy_async` carrega e publica pixels em segundo plano; texto
+mantém seu fluxo síncrono. Somente cópias bem-sucedidas atualizam a recência, sem
+recriar entradas excluídas durante a operação. A janela e a bandeja usam o mesmo
+serviço e o mesmo alerta temático. O alerta exibe um título no corpo para manter a
+identificação também no macOS, onde títulos de QMessageBox podem ser omitidos.
+
+macOS prioriza URLs locais e ignora o marcador privado do ClipX. X11 negocia TARGETS,
+priorizando listas de arquivos sobre imagens e texto, e mantém INCR. Wayland usa
+um único `wl-paste --watch` sem filtro exclusivo de texto; o helper compara o payload
+do evento com uma nova leitura após buscar a representação preferida e descarta
+mudanças concorrentes. Linux compara hashes de pixels publicados pelo próprio
+ClipX entre processos para suprimir ecos; o marcador é substituído na próxima cópia
+e esquecido ao capturar outro conteúdo. Pixels idênticos ao último conteúdo publicado
+são considerados um eco até uma mudança de conteúdo ser observada.
+
+Para reproduzir preview, indisponibilidade e alerta claro/escuro, inclusive na janela
+mínima a 150%, sem tocar no clipboard do usuário:
+
+```bash
+.venv/bin/python tools/render_images.py
+```
+
+As fixtures ficam em `artifacts/images-*.png`. Testes de persistência, concorrência,
+serviço, protocolo X11, eventos Wayland e interface estão em `tests/test_images.py`.
+O teste nativo de pasteboard de imagens está em `tests/test_macos_native.py` e usa
+um pasteboard privado com `CLIPX_TEST_MACOS=1`. Validação real X11/Wayland permanece
+dependente de uma sessão Linux disponível.
+
+
+Validação de imagens em 26/10/2026: suíte com 172 testes (159 aprovados e 13
+ignorados por dependências/opt-in), mais dois testes nativos de pasteboard macOS
+aprovados separadamente, incluindo escrita de imagem em worker. As seis fixtures
+visuais foram renderizadas; preview, indisponibilidade, alertas claro/escuro e
+mínimo ampliado foram inspecionados. Sessões nativas Linux não estavam disponíveis.

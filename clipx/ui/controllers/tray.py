@@ -241,7 +241,11 @@ class ClipXTray(QSystemTrayIcon):
                 action.setData(None)
                 continue
             clip = clips[index]
-            preview = ' '.join(clip.content.split())
+            if clip.type == 'image':
+                from clipx.images import image_title
+                preview = 'Imagem · ' + image_title(clip)
+            else:
+                preview = ' '.join(clip.content.split())
             if len(preview) > 60:
                 preview = preview[:59] + '…'
             action.setText(preview.replace('&', '&&'))
@@ -258,7 +262,18 @@ class ClipXTray(QSystemTrayIcon):
         """
         if clip is None:
             return
-        result = self.window.clipboard_service.copy(clip)
-        self.window.show_result(result)
+        if getattr(self, '_copy_busy', False):
+            return
+        self._copy_busy = True
+        self.window.clipboard_service.copy_async(clip, lambda result: self._copy_finished(clip, result))
+
+    def _copy_finished(self, clip, result):
+        """Report asynchronous image failures after the native menu has closed."""
+        self._copy_busy = False
+        if not result.ok and clip.type == 'image':
+            self.open_search()
+            QTimer.singleShot(0, lambda: self.window.show_copy_failure(clip, result))
+        else:
+            self.window.show_result(result)
         if result.ok:
             self.refresh_menu()

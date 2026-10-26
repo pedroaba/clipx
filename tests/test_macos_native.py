@@ -64,6 +64,48 @@ class MacOSNativeTests(unittest.TestCase):
         driver.poll(sink)
         sink.save.assert_called_once_with('External private test')
 
+    def test_private_pasteboard_images_prefer_file_urls_and_ignore_self_copies(self):
+        """Native image payloads persist paths or one PNG without touching the user's board."""
+        import tempfile
+        from pathlib import Path
+        import AppKit
+        from Foundation import NSURL
+        from PyQt6.QtGui import QImage, QColor
+        from clipx.images import png_bytes, read_image
+        from clipx.capture import ClipboardCapture
+        from clipx.storage import Storage
+        from clipx.platforms.macos.clipboard import MacOSClipboardDriver, SELF_TYPE
+        board = AppKit.NSPasteboard.pasteboardWithName_('ClipX.Images.' + uuid4().hex)
+        self.addCleanup(board.releaseGlobally)
+        driver = MacOSClipboardDriver(board)
+        image = QImage(32, 16, QImage.Format.Format_RGBA8888)
+        image.fill(QColor('blue'))
+        data = png_bytes(image)
+        with tempfile.TemporaryDirectory() as folder:
+            storage = Storage(Path(folder) / 'history.db')
+            capture = ClipboardCapture(storage)
+            source = Path(folder) / 'test image.png'
+            source.write_bytes(data)
+            board.clearContents()
+            board.writeObjects_([NSURL.fileURLWithPath_(str(source))])
+            driver.poll(capture)
+            self.assertEqual(storage.get_clips()[0].content, str(source))
+            self.assertFalse(storage.images_dir.exists())
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                self.assertTrue(pool.submit(driver.write_image, data).result(timeout=5).ok)
+            self.assertIn(SELF_TYPE, board.types())
+            decoded, _, _ = read_image(bytes(board.dataForType_('public.png')))
+            self.assertEqual(decoded.pixelColor(0, 0), QColor('blue'))
+            driver.poll(capture)
+            self.assertEqual(len(storage.get_clips()), 1)
+            board.clearContents()
+            from Foundation import NSData
+            board.setData_forType_(NSData.dataWithBytes_length_(data, len(data)), 'public.png')
+            driver.poll(capture)
+            self.assertEqual(len(storage.get_clips()), 2)
+            self.assertEqual(sum(c.file_owner == 'managed' for c in storage.get_clips()), 1)
+
     def test_carbon_register_unregister(self):
         """Carbon hot keys register a real handle and unregister removes its callback."""
         from PyQt6.QtWidgets import QApplication

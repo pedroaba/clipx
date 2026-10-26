@@ -96,7 +96,12 @@ class X11ClipboardListener:
         self.string = self.display.intern_atom("STRING")
         self.property = self.display.intern_atom("CLIPX_CLIPBOARD")
         self.incr = self.display.intern_atom("INCR")
-        self.target = self.utf8
+        self.targets = self.display.intern_atom('TARGETS')
+        self.mime_targets = {self.display.intern_atom(mime): mime for mime in (
+            'text/uri-list', 'x-special/gnome-copied-files', 'image/png',
+            'image/jpeg', 'image/tiff', 'image/bmp', 'image/gif', 'image/webp',
+            'image/heic', 'image/heif', 'image/svg+xml', 'image/x-icon')}
+        self.target = self.targets
         self.timestamp = X.CurrentTime
         self.chunks = None
         self.display.xfixes_select_selection_input(
@@ -118,7 +123,7 @@ class X11ClipboardListener:
             timestamp (int): X timestamp for the conversion; ``0`` means
                 ``CurrentTime``.
         """
-        self.target = target or self.utf8
+        self.target = target or self.targets
         self.timestamp = timestamp
         self.chunks = None
         self.window.delete_property(self.property)
@@ -155,13 +160,20 @@ class X11ClipboardListener:
             if self.timestamp and event.time != self.timestamp:
                 return
             if event.property == X.NONE:
-                if self.target == self.utf8:
+                if self.target == self.targets:
+                    self.request_content(self.utf8, self.timestamp)
+                elif self.target == self.utf8:
                     self.request_content(self.string, self.timestamp)
                 else:
                     self.capture.save("")
                 return
             value = self.window.get_full_property(self.property, X.AnyPropertyType)
             if value is not None:
+                if self.target == self.targets:
+                    offered = set(value.value) if value.format == 32 else set()
+                    preferred = next((atom for atom in self.mime_targets if atom in offered), self.utf8)
+                    self.request_content(preferred, self.timestamp)
+                    return
                 if value.property_type == self.incr:
                     self.chunks = bytearray()
                 elif value.format == 8:
@@ -194,6 +206,14 @@ class X11ClipboardListener:
         Args:
             data (bytes): Raw selection data.
         """
+        if self.target in self.mime_targets:
+            from clipx.images import ImageError
+            try:
+                self.capture.save_mime(self.mime_targets[self.target], data)
+            except (ImageError, OSError) as exc:
+                import logging
+                logging.getLogger(__name__).warning('Image capture failed: %s', exc)
+            return
         encoding = "utf-8" if self.target == self.utf8 else "latin-1"
         self.capture.save(data.decode(encoding, errors="replace"))
 

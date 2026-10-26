@@ -54,7 +54,7 @@ class CaptureTests(unittest.TestCase):
         """Without an X display the listener command relies solely on wl-paste --watch."""
         with patch.dict(os.environ, {"DISPLAY": ""}):
             command = ClipboardDaemon(self.storage, driver=LinuxClipboardDriver()).listener_command()
-        self.assertEqual(command[:4], ["wl-paste", "--type", "text", "--watch"])
+        self.assertEqual(command[:3], ["wl-paste", "--no-newline", "--watch"])
         self.assertIn("clipx.capture", command)
 
     def test_stop_terminates_listener_and_cancels_pending_start(self):

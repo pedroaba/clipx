@@ -12,6 +12,7 @@ from PyQt6.QtSvg import QSvgRenderer
 from clipx.ui.foundations.theme import TEXT_SECONDARY
 
 PATHS = {
+    'image': '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-6-6L3 21"/>',
     'command': '<path d="M8 8h8v8H8zM8 8H5a3 3 0 1 1 3-3v3Zm8 0V5a3 3 0 1 1 3 3h-3Zm0 8h3a3 3 0 1 1-3 3v-3Zm-8 0v3a3 3 0 1 1-3-3h3Z"/>',
     'globe': '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/>',
     'filter': '<path d="M3 4h18l-7 8v7l-4 2v-9Z"/>',

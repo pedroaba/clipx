@@ -51,7 +51,7 @@ class ReleaseTests(unittest.TestCase):
                                  ['/app/clipx', '_capture', 'a b.db', '--watch-x11'])
             with patch.dict(os.environ, {'DISPLAY': ''}):
                 self.assertEqual(LinuxClipboardDriver().listener_command(Path('a b.db')),
-                                 ['wl-paste', '--type', 'text', '--watch', '/app/clipx', '_capture', 'a b.db'])
+                                 ['wl-paste', '--no-newline', '--watch', '/app/clipx', '_capture', 'a b.db', '--wayland-event'])
             self.assertEqual(module_command('clipx.main', 'show'), ['/app/clipx', 'show'])
 
     def test_release_tag_must_match_project_version(self):

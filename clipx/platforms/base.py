@@ -34,10 +34,12 @@ class Result:
     Attributes:
         status (Status): Category of the outcome; defaults to `Status.READY`.
         message (str): Human-readable detail, often empty on success.
+        code (str): Optional machine-readable failure identifier.
     """
 
     status: Status = Status.READY
     message: str = ''
+    code: str = ''
 
     @property
     def ok(self):
@@ -46,7 +48,7 @@ class Result:
 
 
 class ClipboardDriver(Protocol):
-    """Contract for background clipboard observation and text copying."""
+    """Contract for background clipboard observation and text/image copying."""
 
     def listener_command(self, database: Path) -> list[str]:
         """Return the command line that starts the clipboard watcher process.
@@ -68,6 +70,10 @@ class ClipboardDriver(Protocol):
         Returns:
             Result: `Status.READY` on success, otherwise the failure reason.
         """
+        ...
+
+    def write_image(self, data: bytes) -> Result:
+        """Publish encoded PNG pixels without a file URL or text fallback."""
         ...
 
     def start_observation(self, capture, stopped, report: Callable[[Result], None]):

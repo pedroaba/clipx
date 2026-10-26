@@ -20,7 +20,7 @@ class SearchBarWidget(QWidget):
     query_changed = pyqtSignal(str)
     filter_changed = pyqtSignal(str)
     FILTERS = [('Todos', 'all'), ('Texto', 'text'), ('Código', 'code'),
-               ('Links', 'url'), ('Cores', 'color'), ('Fixados', 'pinned')]
+               ('Links', 'url'), ('Cores', 'color'), ('Imagens', 'image'), ('Fixados', 'pinned')]
 
     def __init__(self, parent=None):
         """Build the search field, history caption, count badge, and filter.

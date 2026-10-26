@@ -1,7 +1,7 @@
 """Shared Qt search surface. System behavior is injected through platform drivers."""
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor, QKeySequence
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QWidget, QMessageBox
 from clipx.platforms import get_platform
 from clipx.platforms.base import Result, Status
 from clipx.services import ClipboardService
@@ -149,6 +149,10 @@ class ClipXMainWindow(QMainWindow):
         if values['preview']:
             self.splitter.setSizes(self._panel_sizes)
         apply_surface(self, values, QSS_STYLESHEET)
+        # Child minimum widths scale too; keep the supported window minimum
+        # large enough for both panels instead of clipping at enlarged fonts.
+        scale = max(1, values['scale'] / 100)
+        self.setMinimumSize(round(720 * scale), round(460 * scale))
         self._signature = None
         self.load_clips()
         self.preferences_changed.emit(values)
@@ -269,13 +273,14 @@ class ClipXMainWindow(QMainWindow):
         signature = (self.current_query, self.current_filter,
                      tuple((clip.id, clip.updated_at, clip.is_pinned) for clip in clips))
         if signature == self._signature:
+            self.preview_pane.refresh_image()
             return
         self._signature = signature
         empty = ('Nenhum resultado.\nTente outro texto ou filtro.' if self.current_query or self.current_filter != 'all'
-                 else 'Seu histórico está vazio.\nCopie um texto para começar.')
+                 else 'Seu histórico está vazio.\nCopie um texto ou imagem para começar.')
         self.clip_list.populate(clips, empty)
         self.search_bar.set_count(len(clips))
-        self.action_bar.primary.setEnabled(bool(clips))
+        self.action_bar.primary.setEnabled(bool(clips) and not getattr(self, '_copy_busy', False))
         if not clips:
             self.preview_pane.show_empty()
 
@@ -424,13 +429,43 @@ class ClipXMainWindow(QMainWindow):
         clip = self.clip_list.get_selected_clip()
         if clip is None:
             return
-        result = self.clipboard_service.copy(clip)
+        if getattr(self, '_copy_busy', False):
+            return
+        self._copy_busy = True
+        self.action_bar.primary.setEnabled(False)
+        self.clipboard_service.copy_async(clip, lambda result: self._copy_finished(clip, paste, result))
+
+    def _copy_finished(self, clip, paste, result):
+        """Close and optionally paste only after a completed successful copy."""
+        self._copy_busy = False
+        self.action_bar.primary.setEnabled(self.clip_list.get_selected_clip() is not None)
         if not result.ok:
-            self.show_result(result)
+            self.show_copy_failure(clip, result)
             return
         self.close()
         if paste:
             QTimer.singleShot(100, self._paste)
+
+    def show_copy_failure(self, clip, result):
+        """Show themed image failures without losing the selection or search."""
+        self.show_result(result)
+        if clip.type != 'image':
+            return
+        from clipx.ui.templates.window import customize_message_box
+        box = QMessageBox(self)
+        box.setWindowTitle('Imagem indisponível')
+        box.setText('Imagem indisponível')
+        box.setInformativeText(result.message)
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setIcon(QMessageBox.Icon.Warning)
+        button = box.addButton('Entendi', QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(button)
+        box.setEscapeButton(button)
+        customize_message_box(box)
+        apply_surface(box, self.preferences, QSS_STYLESHEET)
+        box.exec()
+        self.preview_pane.refresh_image()
+        self.search_bar.focus_input()
 
     def _paste(self):
         """Paste into the previously focused application through the platform.

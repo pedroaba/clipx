@@ -83,8 +83,11 @@ class ClipItemWidget(QWidget):
         super().resizeEvent(event)
         lines = [line.strip() for line in self.item.content.splitlines() if line.strip()]
         title = lines[0] if lines else 'Vazio'
+        if self.item.type == 'image':
+            from clipx.images import image_title
+            title = image_title(self.item)
         count = self.preferences.get('lines', 2)
-        detail = '\n'.join(lines[1:count])
+        detail = self.item.content if self.item.type == 'image' and count > 1 else '\n'.join(lines[1:count])
         if not detail and count > 1 and self.preferences.get('metadata', True):
             detail = f'{self.item.language or self.item.type} · {self.item.char_count} caracteres'
         self.subtitle.setVisible(bool(detail) and count > 1)
