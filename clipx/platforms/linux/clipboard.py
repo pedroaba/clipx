@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from clipx.processes import module_command
+from .processes import helper_environment
 from clipx.platforms.base import Result, Status
 
 
@@ -30,7 +31,7 @@ def copy_to_clipboard(text: str) -> bool:
             continue
         process = None
         try:
-            process = subprocess.Popen([tool, *args], stdin=subprocess.PIPE)
+            process = subprocess.Popen([tool, *args], stdin=subprocess.PIPE, env=helper_environment())
             process.communicate(input=text.encode("utf-8"), timeout=2)
             if process.returncode == 0:
                 return True
@@ -48,6 +49,8 @@ class LinuxClipboardDriver:
         _stopped (threading.Event | None): Stop event stored while an
             observation is running, so :meth:`stop_observation` can signal it.
     """
+    background_copy = True
+
     def __init__(self):
         """Initialize the driver with no active observation."""
         self._stopped = None
@@ -92,7 +95,7 @@ class LinuxClipboardDriver:
             if not shutil.which(tool):
                 continue
             try:
-                process = subprocess.run([tool, *args], input=data, timeout=2, check=False)
+                process = subprocess.run([tool, *args], input=data, timeout=2, check=False, env=helper_environment())
                 if process.returncode == 0:
                     return Result()
             except (OSError, subprocess.SubprocessError):

@@ -63,16 +63,16 @@ class ClipboardService(QObject):
         return result
 
     def copy_async(self, clip, callback):
-        """Copy images off the UI thread; keep existing synchronous text behavior."""
+        """Copy images and Linux text off the UI thread, delivering results via Qt."""
         if self._jobs:
             callback(Result(Status.UNAVAILABLE, 'Uma cópia já está em andamento.'))
             return
-        if clip is None or clip.type != 'image':
+        if clip is None or (clip.type != 'image' and getattr(self.driver, 'background_copy', False) is not True):
             callback(self.copy(clip))
             return
         self._request_id += 1
         token = self._request_id
-        task = _ImageCopyTask(self, clip, token)
+        task = _CopyTask(self, clip, token)
         task.signals.ready.connect(self._copy_finished)
         self._jobs[token] = (task, callback)
         QThreadPool.globalInstance().start(task)
@@ -89,8 +89,8 @@ class _CopySignals(QObject):
     ready = pyqtSignal(int, object)
 
 
-class _ImageCopyTask(QRunnable):
-    """Decode and copy an image without blocking keyboard and preview events."""
+class _CopyTask(QRunnable):
+    """Copy content without blocking keyboard and preview events."""
 
     def __init__(self, service, clip, token):
         """Retain the operation inputs until the worker completes."""
@@ -102,6 +102,6 @@ class _ImageCopyTask(QRunnable):
         """Report exceptions as a failed operation rather than killing a worker."""
         try:
             result = self.service.copy(self.clip)
-        except Exception as exc:
-            result = Result(Status.ERROR, f'Não foi possível copiar a imagem: {exc}')
+        except Exception:
+            result = Result(Status.ERROR, 'Não foi possível copiar o conteúdo.')
         self.signals.ready.emit(self.token, result)

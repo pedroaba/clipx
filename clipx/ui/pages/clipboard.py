@@ -1,4 +1,7 @@
 """Shared Qt search surface. System behavior is injected through platform drivers."""
+import logging
+import time
+
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QCursor, QKeySequence
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMenu, QWidget, QMessageBox
@@ -444,7 +447,11 @@ class ClipXMainWindow(QMainWindow):
             return
         self.close()
         if paste:
-            QTimer.singleShot(100, self._paste)
+            if self.platform.name == 'linux':
+                generation = getattr(self, '_paste_generation', 0)
+                QTimer.singleShot(100, lambda: self._wait_for_paste(generation, time.monotonic() + 1))
+            else:
+                QTimer.singleShot(100, self._paste)
 
     def show_copy_failure(self, clip, result):
         """Show themed image failures without losing the selection or search."""
@@ -467,6 +474,23 @@ class ClipXMainWindow(QMainWindow):
         self.preview_pane.refresh_image()
         self.search_bar.focus_input()
 
+    def _wait_for_paste(self, generation, deadline):
+        """Wait for Linux search dismissal and cancel when it is reopened."""
+        if generation != getattr(self, '_paste_generation', 0):
+            self.show_result(Result(Status.UNAVAILABLE,
+                'Conteúdo copiado. Colagem cancelada porque a pesquisa foi reaberta; use Ctrl+V.',
+                'paste_cancelled'))
+            return
+        if not self.isVisible() and not self.isActiveWindow():
+            self._paste()
+            return
+        if time.monotonic() >= deadline:
+            self.show_result(Result(Status.UNAVAILABLE,
+                'Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.',
+                'paste_unavailable'))
+            return
+        QTimer.singleShot(25, lambda: self._wait_for_paste(generation, deadline))
+
     def _paste(self):
         """Paste into the previously focused application through the platform.
 
@@ -475,8 +499,9 @@ class ClipXMainWindow(QMainWindow):
         """
         try:
             self.platform.desktop.paste_to_previous(callback=self.show_result)
-        except Exception as exc:
-            self.show_result(Result(Status.ERROR, f'Texto copiado. Não foi possível colar: {exc}'))
+        except Exception:
+            logging.getLogger('clipx.desktop').exception('Could not request automatic paste')
+            self.show_result(Result(Status.UNAVAILABLE, 'Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.', 'paste_unavailable'))
 
     def show_result(self, result):
         """Store and display an operation result and notify listeners.
@@ -552,6 +577,9 @@ class ClipXMainWindow(QMainWindow):
         Args:
             event (QShowEvent): Show event forwarded to the base class.
         """
+        if self.platform.name == 'linux':
+            self._paste_generation = getattr(self, '_paste_generation', 0) + 1
+            self.platform.desktop.cancel_paste()
         super().showEvent(event)
         self.search_bar.focus_input(select_all=True)
         self.load_clips()
@@ -588,6 +616,9 @@ class ClipXMainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.Type.ActivationChange:
             if self.isActiveWindow():
+                if self.platform.name == 'linux':
+                    self._paste_generation = getattr(self, '_paste_generation', 0) + 1
+                    self.platform.desktop.cancel_paste()
                 self.search_bar.focus_input()
             else:
                 self.schedule_dismiss()

@@ -36,7 +36,7 @@ class DesktopInstance:
         self.server = QLocalServer()
         self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
 
-    def acquire(self, show=True, activation_token=""):
+    def acquire(self, show=True, activation_token="", startup_id=""):
         """Claim ownership of the desktop instance or notify the running one.
 
         The method tries to take the instance lock. On success it returns True
@@ -50,6 +50,7 @@ class DesktopInstance:
             show (bool): Whether to ask the running instance to open search.
             activation_token (str): Optional token forwarded to the running
                 instance for window activation.
+            startup_id (str): Separate startup announcement to finish after show.
 
         Returns:
             bool: True when this process acquired the lock, False when another
@@ -68,14 +69,16 @@ class DesktopInstance:
             socket = QLocalSocket()
             socket.connectToServer(self.name)
             if socket.waitForConnected(100):
-                if show and activation_token:
-                    message = json.dumps({"command": "show", "activation_token": activation_token})
-                    socket.write(message.encode("utf-8") + b"\n")
+                if show and (activation_token or startup_id):
+                    message = json.dumps({"command": "show", "activation_token": activation_token, "startup_id": startup_id})
+                    written = socket.write(message.encode("utf-8") + b"\n")
                 else:
-                    socket.write(b"show\n" if show else b"ping\n")
+                    written = socket.write(b"show\n" if show else b"ping\n")
+                if written < 0:
+                    raise RuntimeError('Could not send the ClipX activation request')
                 socket.flush()
-                if socket.bytesToWrite():
-                    socket.waitForBytesWritten(1000)
+                if socket.bytesToWrite() and not socket.waitForBytesWritten(1000):
+                    raise RuntimeError('Could not deliver the ClipX activation request')
                 socket.disconnectFromServer()
                 return False
             time.sleep(0.05)
@@ -129,7 +132,11 @@ class DesktopInstance:
                                 request = json.loads(message)
                                 token = request.get("activation_token", "")
                                 if request.get("command") == "show" and isinstance(token, str):
-                                    open_search(activation_token=token)
+                                    startup_id = request.get('startup_id', '')
+                                    if isinstance(startup_id, str) and startup_id:
+                                        open_search(activation_token=token, startup_id=startup_id)
+                                    elif isinstance(startup_id, str):
+                                        open_search(activation_token=token)
                             except (ValueError, AttributeError):
                                 pass
                         connection.disconnectFromServer()

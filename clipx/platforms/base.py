@@ -50,6 +50,8 @@ class Result:
 class ClipboardDriver(Protocol):
     """Contract for background clipboard observation and text/image copying."""
 
+    background_copy: bool
+
     def listener_command(self, database: Path) -> list[str]:
         """Return the command line that starts the clipboard watcher process.
 

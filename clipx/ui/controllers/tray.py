@@ -178,7 +178,7 @@ class ClipXTray(QSystemTrayIcon):
         self.shortcuts_dialog.deleteLater()
         self.shortcuts_dialog = None
 
-    def open_search(self, activation_token=''):
+    def open_search(self, activation_token='', startup_id=''):
         """Open the search window, or focus the preferences dialog if visible.
 
         Remembers the previously focused application, restores the window when
@@ -187,25 +187,35 @@ class ClipXTray(QSystemTrayIcon):
         Args:
             activation_token (str): Platform token used when bringing the
                 window to the front.
+            startup_id (str): Startup announcement forwarded separately from focus.
         """
-        if self.shortcuts_dialog is not None and self.shortcuts_dialog.isVisible():
-            self._bring_to_front(self.shortcuts_dialog, activation_token)
-            return
-        self.platform.desktop.remember_target()
-        if not self.window.isVisible():
-            self.window.prepare_open()
-        self.window.load_clips()
-        self._bring_to_front(self.window, activation_token)
-        self.window.search_bar.focus_input()
+        try:
+            if self.shortcuts_dialog is not None and self.shortcuts_dialog.isVisible():
+                self._bring_to_front(self.shortcuts_dialog, activation_token, startup_id)
+                return
+            self.platform.desktop.remember_target()
+            if not self.window.isVisible():
+                self.window.prepare_open()
+            self.window.load_clips()
+            self._bring_to_front(self.window, activation_token, startup_id)
+            self.window.search_bar.focus_input()
+        except BaseException:
+            if startup_id and self.platform.name == 'linux':
+                self.platform.desktop.finish_startup(startup_id)
+            raise
 
-    def _bring_to_front(self, window, activation_token=''):
+    def _bring_to_front(self, window, activation_token='', startup_id=''):
         """Delegate bringing a window to the front to the platform driver.
 
         Args:
             window (QWidget): Window to raise and activate.
             activation_token (str): Platform token identifying the activation.
+            startup_id (str): Optional startup announcement to complete.
         """
-        self.platform.desktop.open_search(window, activation_token)
+        if startup_id and self.platform.name == 'linux':
+            self.platform.desktop.open_search(window, activation_token, startup_id=startup_id)
+        else:
+            self.platform.desktop.open_search(window, activation_token)
 
     def _on_activated(self, reason):
         """Open the search window when the tray icon is triggered.

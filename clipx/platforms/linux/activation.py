@@ -23,6 +23,49 @@ def startup_message(token, timestamp, screen):
             f'TIMESTAMP={timestamp} BIN="clipx" APPLICATION_ID="clipx.desktop"\0').encode("utf-8")
 
 
+def finish_startup(startup_id):
+    """End a known X11 startup announcement without consuming native Wayland tokens.
+
+    Args:
+        startup_id (str): Explicit startup notification ID; never infer it from
+            an XDG activation token.
+    """
+    if not startup_id or '\0' in startup_id:
+        return
+    connection = None
+    source = None
+    try:
+        from Xlib import X, display, protocol
+        connection = display.Display()
+        root = connection.screen().root
+        source = root.create_window(0, 0, 1, 1, 0, 0, X.InputOnly, X.CopyFromParent,
+                                    override_redirect=True, event_mask=X.PropertyChangeMask)
+        escaped = startup_id.replace('\\', '\\\\').replace('"', '\\"')
+        message = f'remove: ID="{escaped}"\0'.encode('utf-8')
+        begin = connection.intern_atom('_NET_STARTUP_INFO_BEGIN')
+        continuation = connection.intern_atom('_NET_STARTUP_INFO')
+        for offset in range(0, len(message), 20):
+            event = protocol.event.ClientMessage(
+                window=source.id, client_type=begin if offset == 0 else continuation,
+                data=(8, message[offset:offset + 20].ljust(20, b'\0')))
+            root.send_event(event, event_mask=X.PropertyChangeMask)
+        connection.sync()
+    except Exception:
+        logging.getLogger('clipx.activation').warning('Could not finish desktop startup notification', exc_info=True)
+    finally:
+        try:
+            if source is not None:
+                source.destroy()
+        except Exception:
+            logging.getLogger('clipx.activation').warning('Could not destroy startup requestor')
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    logging.getLogger('clipx.activation').warning('Could not close startup connection')
+
+
 def x11_startup_token():
     """Announce a launch via XWayland when a GNOME custom shortcut has no token.
 

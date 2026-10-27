@@ -153,8 +153,9 @@ do banco não mudou, e descarta respostas de seleções antigas. Mudanças de ar
 permissões e restauração invalidam o cache. O pixmap existe apenas na memória e se
 ajusta sem recorte; o caminho é abreviado visualmente, com tooltip completo.
 
-`ClipboardService.copy_async` carrega e publica pixels em segundo plano; texto
-mantém seu fluxo síncrono. Somente cópias bem-sucedidas atualizam a recência, sem
+`ClipboardService.copy_async` carrega e publica pixels em segundo plano. Texto
+também usa worker no Linux, sinalizado por `ClipboardDriver.background_copy`;
+texto no macOS mantém seu fluxo síncrono. Somente cópias bem-sucedidas atualizam a recência, sem
 recriar entradas excluídas durante a operação. A janela e a bandeja usam o mesmo
 serviço e o mesmo alerta temático. O alerta exibe um título no corpo para manter a
 identificação também no macOS, onde títulos de QMessageBox podem ser omitidos.
@@ -187,3 +188,36 @@ ignorados por dependências/opt-in), mais dois testes nativos de pasteboard macO
 aprovados separadamente, incluindo escrita de imagem em worker. As seis fixtures
 visuais foram renderizadas; preview, indisponibilidade, alertas claro/escuro e
 mínimo ampliado foram inspecionados. Sessões nativas Linux não estavam disponíveis.
+
+
+## Ativação e colagem no GNOME/Wayland
+
+`LinuxDesktopDriver` mantém o ID de startup separado do token de ativação nativo.
+A instância secundária encaminha ambos por IPC; a instância principal termina o
+anúncio com `remove` após mostrar a pesquisa ou as preferências. Falhas de abertura,
+falhas no encaminhamento e encerramento antecipado também concluem o anúncio.
+Tokens XDG nativos nunca são interpretados como IDs de startup. Os helpers de cópia
+e de colagem recebem um ambiente sem `DESKTOP_STARTUP_ID`/`XDG_ACTIVATION_TOKEN`.
+
+A janela mantém uma geração de foco para cancelar timers de colagem após reabrir
+ou reativar a pesquisa. Depois de uma breve espera de 100 ms para o compositor,
+aguarda ocultação e perda de foco por até um segundo. O desktop usa um Event para
+cancelar a ferramenta em execução; um QObject persistente entrega resultados no
+thread Qt, mesmo se o worker já terminou. Teclas já entregues ao sistema não podem
+ser desfeitas por um cancelamento posterior.
+
+GNOME/Wayland é detectado pela sessão, independentemente de `DISPLAY`, e usa
+`ydotool`. Outros ambientes mantêm `wtype` com fallback em falha, timeout ou ausência.
+Cada helper tem timeout de dois segundos e pode ser terminado quando a pesquisa
+voltar a receber foco. A indisponibilidade preserva o clipboard e gera feedback
+para colagem manual. `tests/test_linux_copy.py` cobre protocolo, IPC, ambiente,
+responsividade, foco, cancelamento, fallback e entrega dos resultados via Qt.
+
+
+Validação desta correção em 26/10/2026: 197 testes executados, com 184 aprovados
+e 13 ignorados por dependências/opt-in. Inclui um processo auxiliar real sem
+interação com o desktop, testes de cópia lenta com o event loop ativo e IPC em
+socket local. `git diff --check` passou. Não havia sessão GNOME/Ubuntu Wayland
+nativa disponível para confirmar o cursor ou a colagem em aplicativos Wayland e
+XWayland; essa verificação permanece pendente. Não foram alterados serviços ou
+permissões do sistema e não foi criado commit ou release.

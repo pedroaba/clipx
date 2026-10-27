@@ -104,6 +104,7 @@ class TrayTests(unittest.TestCase):
         from clipx.platforms.base import Result
         with patch.object(self.window.platform.clipboard, "write_text", return_value=Result()) as copy:
             action.trigger()
+            self.wait_for(lambda: not getattr(self.tray, '_copy_busy', False))
             copy.assert_called_once_with(content)
         self.assertEqual(self.tray.clip_actions[0].data().content, content)
 

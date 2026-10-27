@@ -27,6 +27,8 @@ class MacOSClipboardDriver:
         _stopped: Event whose setting stops `start_observation`, once started.
     """
 
+    background_copy = False
+
     def __init__(self, pasteboard=None):
         """Initialize the driver.
 
@@ -88,9 +90,9 @@ class MacOSClipboardDriver:
             return Result()
         # Prefer paths to avoid duplicating files that already exist.
         if 'public.file-url' in types or 'NSFilenamesPboardType' in types:
-            from Foundation import NSURL
             paths = []
             if 'public.file-url' in types:
+                from Foundation import NSURL
                 urls = board.readObjectsForClasses_options_([NSURL], None) or ()
                 paths = [str(url.path()) for url in urls if url.isFileURL()]
             if not paths and 'NSFilenamesPboardType' in types:

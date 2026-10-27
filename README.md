@@ -97,7 +97,17 @@ uv sync --frozen
 uv run clipx
 ```
 
-`wtype` ou `ydotool` são opcionais para colagem automática; dependem do compositor e de suas permissões. A bandeja do GNOME precisa de suporte a AppIndicator/KStatusNotifierItem, como Ubuntu AppIndicators.
+A bandeja do GNOME precisa de suporte a AppIndicator/KStatusNotifierItem, como Ubuntu AppIndicators.
+
+### Cópia e colagem automática
+
+A cópia de texto e imagem executa em segundo plano. **Copiar apenas** fecha a pesquisa após confirmar a cópia; **Copiar e colar** também espera a janela ficar oculta e inativa antes de enviar Ctrl+V. Reabrir ou reativar a pesquisa cancela uma colagem pendente. A abertura encerra explicitamente o anúncio de inicialização do desktop para não deixar seu indicador de carregamento ativo; tokens de abertura não são repassados aos comandos de cópia ou colagem.
+
+No **GNOME/Ubuntu com Wayland**, inclusive quando `DISPLAY` aponta para XWayland, a colagem usa `ydotool`. Instale o cliente e o daemon fornecidos pela sua distribuição (no Ubuntu/Debian, comece por `sudo apt install ydotool`; a separação dos pacotes varia). O serviço `ydotoold` precisa estar ativo e ter acesso a `/dev/uinput`; o usuário do ClipX precisa conseguir acessar seu socket. Quando o serviço usa um caminho personalizado, configure `YDOTOOL_SOCKET` no ambiente do ClipX. Os nomes das unidades systemd e as regras de acesso variam conforme a distribuição: siga o pacote instalado e a [documentação do ydotool](https://github.com/ReimuNotMoe/ydotool).
+
+O ClipX não instala nem inicia esse serviço e não altera permissões automaticamente. Nos demais ambientes, tenta `wtype` e recorre a `ydotool` se o primeiro estiver ausente, falhar ou exceder o timeout. Cada ferramenta tem um limite de dois segundos; a pesquisa continua responsiva durante a espera.
+
+Se a colagem não estiver disponível, o conteúdo permanece no clipboard e a interface informa **“Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.”** Os logs identificam ferramenta ausente, falha do serviço ou timeout, sem registrar o conteúdo copiado. Ao usar o serviço do ClipX, consulte `journalctl --user -u clipx-daemon.service -b`.
 
 O material visual Linux é desenhado pelo Qt: grafite predominantemente opaco, bordas sutis e camadas. Não requer extensões para blur e não promete desfoque real do desktop.
 

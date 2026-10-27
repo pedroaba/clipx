@@ -41,70 +41,89 @@ def run_gui(start_hidden=False):
         if tuple(int(part) for part in system_platform.mac_ver()[0].split(".")[:1]) < (14,):
             raise RuntimeError("O ClipX requer macOS 14 ou superior.")
     platform.paths.migrate_legacy()
-    activation_token = platform.desktop.activation_token() if not start_hidden else ""
-    from PyQt6.QtCore import QTimer, Qt
-    from PyQt6.QtWidgets import QApplication
-    from clipx.instance import DesktopInstance
-    from clipx.ui.controllers.tray import ClipXTray
-    from clipx.ui.pages.clipboard import ClipXMainWindow
-
-    # Optimize for Wayland / X11
-    if not os.environ.get("QT_QPA_PLATFORM"):
-        if platform.name == "linux" and os.environ.get("WAYLAND_DISPLAY"):
-            os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
-
-    app = QApplication(sys.argv)
-    from clipx.ui.foundations.branding import app_icon
-    app.setWindowIcon(app_icon())
-    app.setApplicationName("ClipX")
-    app.setDesktopFileName("clipx")
-    app.setQuitOnLastWindowClosed(False)
-    if platform.name == "macos" and app.platformName() not in ("offscreen", "minimal"):
-        import AppKit
-        AppKit.NSApplication.sharedApplication().setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
-
-    instance = DesktopInstance()
-    if not instance.acquire(show=not start_hidden, activation_token=activation_token):
-        return
-
-    storage = Storage()
-
-    window = ClipXMainWindow(storage=storage, platform=platform)
-    tray = ClipXTray(storage, window, app)
-    instance.listen(tray.open_search)
-    tray.show()
-    tray.updates.restore_install_result()
-    if tray.updates.install_result:
-        QTimer.singleShot(0, lambda: tray.open_preferences('updates'))
-    if not start_hidden:
-        tray.open_search(activation_token=activation_token)
-
+    inherited_launch = platform.name == 'linux' and bool(
+        os.environ.get('DESKTOP_STARTUP_ID') or os.environ.get('XDG_ACTIVATION_TOKEN'))
+    activation_token = platform.desktop.activation_token() if not start_hidden or inherited_launch else ""
+    startup_id = getattr(platform.desktop, 'startup_id', '') if platform.name == 'linux' else ''
     try:
-        platform.shortcuts.start(tray.open_search)
-    except (OSError, RuntimeError, ValueError) as exc:
-        from clipx.platforms.base import Result, Status
-        window.show_result(Result(Status.UNAVAILABLE, f"Atalho global indisponível: {exc}"))
-    daemon = ClipboardDaemon(storage=storage, driver=platform.clipboard)
-    daemon.status_changed.connect(tray.set_capture_status, Qt.ConnectionType.QueuedConnection)
-    tray.set_capture_status(daemon.status)
-    daemon.start_background()
-    app.aboutToQuit.connect(daemon.stop)
-    app.aboutToQuit.connect(tray.hide)
-    app.aboutToQuit.connect(instance.close)
-    app.aboutToQuit.connect(platform.shortcuts.stop)
-    app.aboutToQuit.connect(lambda: platform.effects.remove(window))
-    if hasattr(platform.desktop, "stop"):
-        app.aboutToQuit.connect(platform.desktop.stop)
+        from PyQt6.QtCore import QTimer, Qt
+        from PyQt6.QtWidgets import QApplication
+        from clipx.instance import DesktopInstance
+        from clipx.ui.controllers.tray import ClipXTray
+        from clipx.ui.pages.clipboard import ClipXMainWindow
 
-    # Let Python handle termination signals while Qt owns the event loop.
-    signal.signal(signal.SIGINT, lambda *_: app.quit())
-    signal.signal(signal.SIGTERM, lambda *_: app.quit())
-    signal_timer = QTimer(app)
-    signal_timer.timeout.connect(lambda: None)
-    signal_timer.start(250)
+        # Optimize for Wayland / X11
+        if not os.environ.get("QT_QPA_PLATFORM"):
+            if platform.name == "linux" and os.environ.get("WAYLAND_DISPLAY"):
+                os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
-    exit_code = app.exec()
-    sys.exit(exit_code)
+        app = QApplication(sys.argv)
+        from clipx.ui.foundations.branding import app_icon
+        app.setWindowIcon(app_icon())
+        app.setApplicationName("ClipX")
+        app.setDesktopFileName("clipx")
+        app.setQuitOnLastWindowClosed(False)
+        if platform.name == "macos" and app.platformName() not in ("offscreen", "minimal"):
+            import AppKit
+            AppKit.NSApplication.sharedApplication().setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+
+        instance = DesktopInstance()
+        if not instance.acquire(show=not start_hidden, activation_token=activation_token, startup_id=startup_id):
+            # A hidden launch only pings the owner; it does not hand off a show
+            # request that could complete the notification in the main process.
+            if start_hidden and startup_id:
+                platform.desktop.finish_startup(startup_id)
+            return
+
+        storage = Storage()
+
+        window = ClipXMainWindow(storage=storage, platform=platform)
+        tray = ClipXTray(storage, window, app)
+        instance.listen(tray.open_search)
+        tray.show()
+        tray.updates.restore_install_result()
+        if tray.updates.install_result:
+            QTimer.singleShot(0, lambda: tray.open_preferences('updates'))
+        if start_hidden and platform.name == 'linux':
+            platform.desktop.finish_startup(startup_id)
+            os.environ.pop('DESKTOP_STARTUP_ID', None)
+            os.environ.pop('XDG_ACTIVATION_TOKEN', None)
+        if not start_hidden:
+            if startup_id:
+                tray.open_search(activation_token=activation_token, startup_id=startup_id)
+            else:
+                tray.open_search(activation_token=activation_token)
+
+        try:
+            platform.shortcuts.start(tray.open_search)
+        except (OSError, RuntimeError, ValueError) as exc:
+            from clipx.platforms.base import Result, Status
+            window.show_result(Result(Status.UNAVAILABLE, f"Atalho global indisponível: {exc}"))
+        daemon = ClipboardDaemon(storage=storage, driver=platform.clipboard)
+        daemon.status_changed.connect(tray.set_capture_status, Qt.ConnectionType.QueuedConnection)
+        tray.set_capture_status(daemon.status)
+        daemon.start_background()
+        app.aboutToQuit.connect(daemon.stop)
+        app.aboutToQuit.connect(tray.hide)
+        app.aboutToQuit.connect(instance.close)
+        app.aboutToQuit.connect(platform.shortcuts.stop)
+        app.aboutToQuit.connect(lambda: platform.effects.remove(window))
+        if hasattr(platform.desktop, "stop"):
+            app.aboutToQuit.connect(platform.desktop.stop)
+
+        # Let Python handle termination signals while Qt owns the event loop.
+        signal.signal(signal.SIGINT, lambda *_: app.quit())
+        signal.signal(signal.SIGTERM, lambda *_: app.quit())
+        signal_timer = QTimer(app)
+        signal_timer.timeout.connect(lambda: None)
+        signal_timer.start(250)
+
+        exit_code = app.exec()
+        sys.exit(exit_code)
+    except BaseException:
+        if startup_id and platform.name == 'linux' and platform.desktop.startup_id:
+            platform.desktop.finish_startup(startup_id)
+        raise
 
 
 def main():
