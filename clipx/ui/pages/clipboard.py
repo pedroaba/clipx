@@ -55,6 +55,7 @@ class ClipXMainWindow(QMainWindow):
 
     operation_result = pyqtSignal(object)
     preferences_changed = pyqtSignal(object)
+    maintenance_finished = pyqtSignal()
 
     def __init__(self, storage=None, shortcut_settings=None, platform=None):
         """Assemble services, window flags, timers and the interface.

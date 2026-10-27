@@ -76,4 +76,46 @@ PREFERENCES_QSS += """
 QFrame#PreferencesSeparator { background: #2B2B30; border: none; }
 QPushButton#NavigationItem { color: #A1A1AA; padding: 8px; }
 QPushButton#NavigationItem:checked { color: #F4F4F5; }
+QPushButton#DeleteButton { color: #FF766D; border-color: #793C39; }
+QPushButton#DeleteButton:hover { border-color: #FF766D; }
+QCheckBox:disabled { color: #A1A1AA; }
+QWidget#MaintenancePage { background: #101012; }
+QFrame#MaintenanceCard { background: #141416; border: 1px solid #2B2B30; border-radius: 10px; }
+QFrame#MaintenanceDanger { background: #1D1112; border: 1px solid #793C39; border-radius: 10px; }
+QLabel#MaintenanceTitle, QLabel#MaintenanceDangerTitle { font-size: 12pt; font-weight: 500; }
+QLabel#MaintenanceDangerTitle { color: #FF766D; }
+QLabel#MaintenanceLabel { color: #A1A1AA; font-size: 11pt; }
+QFrame#SegmentedSelect { background: #0D0D0F; border: 1px solid #2B2B30; border-radius: 9px; }
+QToolButton#SegmentButton { background: transparent; color: #A1A1AA; border: 1px solid transparent; border-radius: 6px; font-size: 11pt; padding: 3px 8px; }
+QToolButton#SegmentButton:hover { color: #F4F4F5; background: #18181B; }
+QToolButton#SegmentButton:checked { color: #F4F4F5; background: #202023; border-color: #36363B; }
+QToolButton#SegmentButton:focus { border-color: #A1A1AA; }
+QToolButton#SegmentButton:disabled { color: #90909B; }
+QWidget#MaintenancePage QPushButton { border-radius: 7px; font-size: 11pt; }
+QWidget#MaintenancePage QCheckBox { font-size: 11pt; }
+QPushButton#MaintenanceAnalyze { background: transparent; }
+QPushButton#MaintenanceAnalyze:hover { background: #202024; }
+QPushButton#MaintenancePrimary { background: #F4F4F5; border-color: #F4F4F5; color: #101012; font-weight: 500; }
+QPushButton#MaintenancePrimary:hover { background: #D4D4D8; }
+QPushButton#MaintenancePrimary:disabled { background: #303034; border-color: #303034; color: #A1A1AA; }
+QPushButton#MaintenanceDelete { background: transparent; color: #FF766D; border-color: #793C39; font-weight: 500; }
+QPushButton#MaintenanceDelete:hover { background: #1D1112; border-color: #FF766D; }
+QPushButton#MaintenanceDelete:disabled { color: #90909B; border-color: #36363B; }
+QFrame#ConfirmationCard { background: #18181B; border: 1px solid #36363B; border-radius: 14px; }
+QFrame#ConfirmationBadge { background: #1D1112; border: none; border-radius: 24px; }
+QLabel#ConfirmationTitle { font-size: 17pt; font-weight: 600; }
+QLabel#ConfirmationEffect, QLabel#ConfirmationPreserved { font-size: 11pt; }
+QLabel#ConfirmationPreserved { color: #A1A1AA; }
+QFrame#ConfirmationSummary { background: #141416; border: 1px solid #2B2B30; border-radius: 10px; }
+QPlainTextEdit#ConfirmationDetails { background: #0D0D0F; color: #A1A1AA; border: 1px solid #2B2B30; border-radius: 10px; padding: 12px; font-family: "Geist Mono"; font-size: 10pt; selection-background-color: #44444C; }
+QScrollArea#ConfirmationScroll { background: transparent; border: none; }
+QFrame#ConfirmationFooter { background: #0D0D0F; border: none; border-top: 1px solid #2B2B30; border-bottom-left-radius: 14px; border-bottom-right-radius: 14px; }
+QPushButton#ConfirmationClose { background: transparent; border: 1px solid transparent; padding: 0; border-radius: 5px; }
+QPushButton#ConfirmationClose:hover { background: #29292E; }
+QPushButton#ConfirmationCancel { background: transparent; border: 1px solid #36363B; border-radius: 7px; padding: 7px 16px; font-size: 11pt; }
+QPushButton#ConfirmationCancel:hover { background: #202024; }
+QPushButton#ConfirmationDestructive { background: #D92D20; color: #FFFFFF; border: 1px solid #D92D20; border-radius: 7px; padding: 7px 16px; font-size: 11pt; font-weight: 500; }
+QPushButton#ConfirmationDestructive:hover { background: #B42318; border-color: #B42318; }
+QPushButton#ConfirmationCancel:focus, QPushButton#ConfirmationClose:focus { border-color: #A1A1AA; }
+QPushButton#ConfirmationDestructive:focus { border: 2px solid #F4F4F5; }
 """

@@ -14,6 +14,7 @@ from unittest.mock import Mock
 if '--native' not in sys.argv:
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtTest import QTest
 from clipx.shortcuts import ShortcutSettings
 from clipx.storage import Storage
 from clipx.ui.pages.clipboard import ClipXMainWindow
@@ -22,6 +23,8 @@ from clipx.platforms.effects import OpaqueWindowEffects
 
 app = QApplication([])
 app.setQuitOnLastWindowClosed(False)
+maintenance_only = '--maintenance' in sys.argv
+confirmations_only = '--confirmations' in sys.argv
 with tempfile.TemporaryDirectory() as folder:
     root = Path(folder)
     from clipx.platforms import get_platform
@@ -40,12 +43,39 @@ with tempfile.TemporaryDirectory() as folder:
     for theme in ('dark', 'light'):
         page.controls['theme'].setCurrentIndex(page.controls['theme'].findData(theme))
         page.apply_changes()
-        page.resize(1040, 740)
+        page.resize(1040, 820 if maintenance_only else 740)
         page.show()
-        for section in ('appearance', 'content', 'window', 'shortcuts'):
+        if confirmations_only:
+            from clipx.maintenance import MaintenanceResult, PruneOptions
+            from clipx.ui.organisms.maintenance_confirmation import MaintenanceConfirmation, prune_confirmation, uninstall_confirmation
+            # Explicit preview fixtures, unrelated to the user's real history.
+            estimate = MaintenanceResult(items=20, files=1, bytes=220243,
+                                         paths=[str(Path.home() / 'Library/Application Support/ClipX'),
+                                                str(Path.home() / 'Library/Preferences/ClipX')])
+            for name, spec in [('prune', prune_confirmation(PruneOptions('all', 'content'), estimate)),
+                               ('uninstall', uninstall_confirmation(estimate))]:
+                alert = MaintenanceConfirmation(spec, window.preferences, page)
+                alert.show()
+                app.processEvents()
+                alert.grab().save(str(output / f'confirmation-{theme}-{name}.png'))
+                alert.reject()
+                alert.deleteLater()
+            continue
+        sections = ('maintenance',) if maintenance_only else ('appearance', 'content', 'window', 'shortcuts')
+        for section in sections:
             page.select_section(section)
+            if section == 'maintenance':
+                page.maintenance_page.analyze_data()
+                for _ in range(500):
+                    QTest.qWait(10)
+                    if not page.maintenance_page.busy:
+                        break
+                else:
+                    raise TimeoutError('A análise dos dados de exemplo não terminou.')
             app.processEvents()
             page.grab().save(str(output / f'preferences-{theme}-{section}.png'))
+        if maintenance_only:
+            continue
         page.select_section('appearance')
         page.controls['scale'].setCurrentIndex(page.controls['scale'].findData(150))
         page.apply_changes()

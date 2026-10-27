@@ -13,6 +13,7 @@ import sys
 
 from clipx.detector import ContentDetector
 from clipx.storage import Storage
+from clipx.maintenance_lock import capture_event, registered_process
 
 logger = logging.getLogger("clipx.capture")
 
@@ -41,6 +42,7 @@ class ClipboardCapture:
         """
         self._last_hash = None
 
+    @capture_event
     def save(self, text):
         """Detect and persist clipboard text unless it is blank or repeated.
 
@@ -62,6 +64,7 @@ class ClipboardCapture:
         self.storage.add_clip(text, detection.clip_type, detection.language)
         self._last_hash = content_hash
 
+    @capture_event
     def save_files(self, paths):
         """Capture one entry per readable local image in a file selection."""
         from clipx.images import ImageError
@@ -73,6 +76,7 @@ class ClipboardCapture:
             except ImageError:
                 continue
 
+    @capture_event
     def save_image(self, data):
         """Capture pixels unless they echo a recent ClipX image write."""
         from clipx.images import read_image
@@ -82,6 +86,7 @@ class ClipboardCapture:
             self.storage.add_image(data)
         self.reset()
 
+    @capture_event
     def save_mime(self, mime, data):
         """Route a native payload by its advertised MIME type."""
         if mime in ('text/uri-list', 'x-special/gnome-copied-files'):
@@ -97,7 +102,7 @@ class ClipboardCapture:
 
 
 
-def main():
+def _main():
     """Run the capture worker selected by command-line flags.
 
     The worker accepts a database path. ``--watch-x11`` delegates to the Linux
@@ -147,6 +152,11 @@ def main():
     if os.environ.get("CLIPBOARD_STATE") not in ("nil", "clear", "sensitive"):
         capture.save(sys.stdin.read())
     return 0
+
+
+def main():
+    with registered_process():
+        return _main()
 
 
 if __name__ == "__main__":

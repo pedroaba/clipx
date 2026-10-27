@@ -291,6 +291,14 @@ class UpdateService(QObject):
         self.changed.emit()
 
     def _start(self, action, completed):
+        from clipx.maintenance_lock import activity
+        self._maintenance_lease = activity()
+        try:
+            self._maintenance_lease.__enter__()
+        except OSError as exc:
+            self._maintenance_lease = None
+            self.set_state('error', str(exc))
+            return
         self.worker = UpdateWorker(action, self)
         self.worker.result.connect(completed)
         self.worker.failed.connect(lambda message: self.set_state('error', message))
@@ -301,6 +309,9 @@ class UpdateService(QObject):
         self.changed.emit()
 
     def _finished(self):
+        if getattr(self, '_maintenance_lease', None) is not None:
+            self._maintenance_lease.__exit__(None, None, None)
+            self._maintenance_lease = None
         self.worker.deleteLater()
         self.worker = None
         self.changed.emit()
@@ -339,6 +350,7 @@ class UpdateService(QObject):
             return
         self._clean_download()
         self.folder = Path(tempfile.mkdtemp(prefix='clipx-update-'))
+        (self.folder / '.clipx-owned').write_text('update\n')
         self.received = 0
         self.total = self.release.size
         self.set_state('downloading', 'Baixando instalador…')

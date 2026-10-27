@@ -5,6 +5,7 @@ invalid values back to defaults, and a settings class that reads and writes the
 ``ui`` section of the shared ``settings.json`` atomically.
 """
 
+from clipx.maintenance_lock import writer
 import json
 from clipx.shortcuts import ShortcutSettings
 
@@ -67,6 +68,7 @@ class UISettings(ShortcutSettings):
         """
         return validate_ui(self.read_document().get('ui'))
 
+    @writer
     def save(self, values, geometry=None, shortcuts=None):
         """Validate and atomically persist UI settings and optional sections.
 

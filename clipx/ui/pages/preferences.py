@@ -122,13 +122,16 @@ class PreferencesDialog(ShortcutsDialog):
         nav.setFixedWidth(198)
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(12, 20, 12, 12)
-        for key, label in [(k, v[0]) for k, v in SECTIONS.items()] + [('shortcuts', 'Atalhos'), ('updates', 'Atualizações')]:
+        for key, label in [(k, v[0]) for k, v in SECTIONS.items()] + [('shortcuts', 'Atalhos'), ('updates', 'Atualizações'), ('maintenance', 'Dados e\ndesinstalação')]:
             button = QPushButton(label)
             button.setObjectName('NavigationItem')
+            button.setAccessibleName(label.replace('\n', ' '))
             button.setProperty('lucideIcon', {'appearance': 'palette', 'content': 'panels-top-left',
-                                              'window': 'app-window', 'shortcuts': 'keyboard', 'updates': 'loader-circle'}[key])
+                                              'window': 'app-window', 'shortcuts': 'keyboard', 'updates': 'loader-circle', 'maintenance': 'app-window'}[key])
+            if key == 'maintenance':
+                button.setProperty('glyphName', 'trash')
             button.toggled.connect(lambda checked, item=button: refresh_lucide_button(item, self.window.preferences))
-            button.setMinimumHeight(40)
+            button.setMinimumHeight(52 if key == 'maintenance' else 40)
             button.setCheckable(True)
             button.setAutoDefault(False)
             button.clicked.connect(lambda checked=False, name=key: self.select_section(name))
@@ -217,6 +220,13 @@ class PreferencesDialog(ShortcutsDialog):
         updates_scroll.setWidget(self.updates_page)
         self.stack.addWidget(updates_scroll)
         self.pages['updates'] = updates_scroll
+        from clipx.ui.organisms.maintenance_page import MaintenancePage
+        self.maintenance_page = MaintenancePage(self)
+        maintenance_scroll = QScrollArea()
+        maintenance_scroll.setWidgetResizable(True)
+        maintenance_scroll.setWidget(self.maintenance_page)
+        self.stack.addWidget(maintenance_scroll)
+        self.pages['maintenance'] = maintenance_scroll
         self.footer.reset.clicked.disconnect()
         self.buttons.accepted.disconnect()
         self.buttons.rejected.disconnect()
@@ -290,7 +300,7 @@ class PreferencesDialog(ShortcutsDialog):
         if self.controller.paused_binding is not None:
             return
         self.section = name
-        self.footer.reset.setVisible(name != 'updates')
+        self.footer.reset.setVisible(name not in ('updates', 'maintenance'))
         self.stack.setCurrentWidget(self.surface if name == 'shortcuts' else self.pages[name])
         for key, button in self.navigation.items():
             button.setChecked(key == name)
@@ -298,7 +308,7 @@ class PreferencesDialog(ShortcutsDialog):
 
     def restore_section(self):
         """Restore defaults for the current section, without saving them."""
-        if self.section == 'updates':
+        if self.section in ('updates', 'maintenance'):
             return
         if self.section == 'shortcuts':
             self.controller.restore_defaults()
@@ -403,9 +413,12 @@ class PreferencesDialog(ShortcutsDialog):
         apply_window_chrome(self)
         if self._ready:
             apply_surface(self.sample, self.ui_draft(), PREFERENCES_QSS)
+            self.maintenance_page.refresh_appearance(self.window.preferences)
 
     def cancel_changes(self):
         """Close the dialog without saving, marking the close as confirmed."""
+        if self.maintenance_page.busy:
+            return
         self._confirmed_close = True
         self.reject()
 
@@ -418,6 +431,8 @@ class PreferencesDialog(ShortcutsDialog):
         Args:
             result (int): Dialog result code.
         """
+        if self._ready and self.maintenance_page.busy and not getattr(self, '_maintenance_shutdown', False):
+            return
         self.controller.stop_recording()
         if self.controller.paused_binding is not None:
             self._confirmed_close = False

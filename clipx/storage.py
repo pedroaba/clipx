@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
+from contextlib import nullcontext
+from clipx.maintenance_lock import activity, writer
 
 
 @dataclass
@@ -58,6 +60,7 @@ class Storage:
     the platform data directory and migrates legacy locations first.
     """
 
+    @writer
     def __init__(self, db_path: Optional[Path] = None):
         """Open or create the history database.
 
@@ -84,7 +87,13 @@ class Storage:
         self._init_db()
 
     @contextmanager
-    def _get_connection(self, write=False):
+    def _get_connection(self, write=False, cleanup=True):
+        with activity() if write else nullcontext():
+            with self._connection(write=write, cleanup=cleanup) as conn:
+                yield conn
+
+    @contextmanager
+    def _connection(self, write=False, cleanup=True):
         """Open a SQLite connection wrapped in a transaction.
 
         The connection uses ``sqlite3.Row`` rows and is committed or rolled back
@@ -105,7 +114,8 @@ class Storage:
                     conn.execute('BEGIN IMMEDIATE')
                 yield conn
         finally:
-            if write:
+            # The transaction has committed or rolled back before collection.
+            if write and cleanup:
                 try:
                     self._cleanup_images(conn)
                     conn.commit()

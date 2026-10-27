@@ -5,6 +5,7 @@ validation helpers, an atomic JSON settings store, and a compatibility factory
 for platform-specific global shortcut backends.
 """
 
+from clipx.maintenance_lock import writer
 import json
 import os
 from pathlib import Path
@@ -132,6 +133,7 @@ class ShortcutSettings:
         except (OSError, ValueError, KeyError, TypeError):
             return DEFAULT_SHORTCUTS.copy()
 
+    @writer
     def save(self, values):
         """Validate and atomically save shortcut bindings.
 

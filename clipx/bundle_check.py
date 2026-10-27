@@ -75,6 +75,7 @@ def main():
         assert ICON_PATH.is_file(), 'Brand icon missing from bundle'
         from clipx import update_install
         assert (Path(update_install.__file__).parent / 'scripts/updates/supervisor.sh').is_file(), 'Update helper missing from bundle'
+        assert (Path(update_install.__file__).parent / 'scripts/maintenance/supervisor.sh').is_file(), 'Uninstall helper missing from bundle'
         from clipx.updates import tls_context
         assert tls_context().get_ca_certs(), 'HTTPS certificate store unavailable'
         install_fonts()
@@ -131,6 +132,13 @@ def main():
         dialog.select_section('updates')
         assert dialog.updates_page.service.worker is None, 'Updates must remain manual'
         assert dialog.footer.reset.isHidden(), 'Updates has no resettable settings'
+        from clipx.ui.organisms.uninstall_progress import UninstallProgressDialog
+        from clipx.maintenance import MaintenanceResult
+        uninstall_progress = UninstallProgressDialog(root, lambda progress: MaintenanceResult(), window.preferences)
+        assert uninstall_progress.progress.maximum() == 0, 'Uninstall must display indeterminate progress'
+        assert not uninstall_progress.worker.isRunning(), 'Uninstall must never start during smoke tests'
+        assert not uninstall_progress.close_button.isEnabled(), 'Uninstall cannot be dismissed while busy'
+        uninstall_progress.deleteLater()
         for theme in ('dark', 'light'):
             window.apply_preferences({**window.preferences, 'theme': theme})
             app.processEvents()
@@ -138,7 +146,7 @@ def main():
         dialog.cancel_changes()
         window.close()
         print(json.dumps({'ok': True, 'platform': sys.platform, 'frozen': bool(getattr(sys, 'frozen', False)),
-                          'checks': ['capture-subprocess', 'sqlite', 'local-socket', 'native-driver-import', 'Qt-offscreen', 'fonts', 'icons', 'preferences', 'themes', 'updates-helper', 'updates-page']}))
+                          'checks': ['capture-subprocess', 'sqlite', 'local-socket', 'native-driver-import', 'Qt-offscreen', 'fonts', 'icons', 'preferences', 'themes', 'updates-helper', 'updates-page', 'uninstall-progress']}))
     return 0
 
 

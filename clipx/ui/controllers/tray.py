@@ -80,6 +80,7 @@ class ClipXTray(QSystemTrayIcon):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(1000)
         self.refresh_timer.timeout.connect(self.refresh_menu)
+        self.window.maintenance_finished.connect(self.refresh_menu)
         self.refresh_timer.start()
         self._recent = None
         self.refresh_menu()

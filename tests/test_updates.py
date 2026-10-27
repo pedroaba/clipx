@@ -254,7 +254,7 @@ class NativeInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             prepared = PreparedInstall(root, root / 'result', ('/fake/clipx', 'tray'), root / 'transaction')
-            with patch('PyQt6.QtCore.QProcess.startDetached', return_value=(False, 0)):
+            with patch('clipx.update_install.subprocess.Popen', side_effect=OSError('unavailable')):
                 with self.assertRaises(UpdateError):
                     launch_install(prepared)
 
@@ -264,7 +264,7 @@ class NativeInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             prepared = PreparedInstall(root, root / 'result', ('/fake/clipx', 'tray'), root / 'transaction')
-            with patch('PyQt6.QtCore.QProcess.startDetached', return_value=(True, 123)):
+            with patch('clipx.update_install.subprocess.Popen'):
                 launch_install(prepared)
             self.assertEqual((root / 'supervisor.sh').read_bytes(), source.read_bytes())
             self.assertEqual((root / 'supervisor.sh').stat().st_mode & 0o777, 0o700)

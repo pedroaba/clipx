@@ -15,12 +15,16 @@ DARK_PALETTE = {
     'card': '#242428', 'hover': '#29292E', 'selection': '#343439',
     'border': '#36363B', 'text': '#F4F4F5', 'secondary': '#A1A1AA',
     'muted': '#90909B', 'danger': '#FF766D', 'link': '#82B8F8',
+    'danger_surface': '#1D1112', 'danger_border': '#793C39',
+    'danger_action': '#D92D20', 'danger_action_hover': '#B42318',
 }
 LIGHT_PALETTE = {
     'canvas': '#FFFFFF', 'preferences': '#FAFAFA', 'sidebar': '#F0F0F2',
     'card': '#F1F1F4', 'hover': '#E9E9ED', 'selection': '#DFDFE6',
     'border': '#D1D1D8', 'text': '#18181B', 'secondary': '#52525B',
     'muted': '#60606B', 'danger': '#B42318', 'link': '#175CD3',
+    'danger_surface': '#FFF5F4', 'danger_border': '#E5AAA5',
+    'danger_action': '#D92D20', 'danger_action_hover': '#B42318',
 }
 # Resolve existing QSS literals through the semantic palette, with aliases for
 # component-specific surfaces. This keeps one authoritative light/dark mapping.
@@ -142,7 +146,7 @@ def apply_surface(widget, values, source=None):
             if not hasattr(child, '_ui_style'):
                 child._ui_style = child.styleSheet()
             child.setStyleSheet(stylesheet(child._ui_style, values))
-        if child.property('lucideIcon'):
+        if child.property('lucideIcon') or child.property('glyphName'):
             from clipx.ui.foundations.icons import refresh_lucide_button
             refresh_lucide_button(child, values)
         if child.property('iconName'):

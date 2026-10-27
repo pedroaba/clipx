@@ -221,3 +221,100 @@ socket local. `git diff --check` passou. Não havia sessão GNOME/Ubuntu Wayland
 nativa disponível para confirmar o cursor ou a colagem em aplicativos Wayland e
 XWayland; essa verificação permanece pendente. Não foram alterados serviços ou
 permissões do sistema e não foi criado commit ou release.
+
+## Dados e desinstalação
+
+`ui/organisms/maintenance_page.py` apresenta as ações imediatas fora do rascunho de
+Preferências: categoria Dados/Imagens/Tudo, comportamento sobras/conteúdo, proteção
+de fixados, análise e confirmação. As tarefas executam em QThread, com progresso,
+resultado persistente na tela e fechamento protegido enquanto o worker está ativo.
+O prune atualiza a lista, prévia e bandeja sem alterar preferências ou clipboard.
+
+`clipx/maintenance.py` implementa o serviço compartilhado com a CLI, sem instanciar
+Storage na análise. A coleta explícita respeita a categoria, confirma as exclusões
+de registros antes de remover PNGs e deixa falhas de arquivo recuperáveis por retry.
+`clipx/maintenance_lock.py` coordena gravações, observadores, atualizações e processos
+por conta do sistema. A observação permanece ativa durante prune, descartando eventos
+que chegam enquanto as gravações estão pausadas, sem reiniciar os contadores nativos.
+
+`clipx/uninstall.py` prepara o runtime independente, encerra processos registrados,
+limpa os diretórios conhecidos e delega a remoção da instalação à plataforma. O
+resultado final usa ferramentas do sistema, pois o app original já terá encerrado.
+Os testes de segurança e persistência estão em `tests/test_maintenance.py`; os testes
+da página e confirmação estão em `tests/test_ui_preferences.py`.
+
+A página usa a referência visual fornecida em React: painel de limpeza com
+seletores segmentados e ícones, toggle de fixados, ações lado a lado e zona de perigo
+separada com cores semânticas nos dois temas. As categorias continuam sendo Tudo,
+Dados e Imagens; os comportamentos continuam sobras ou conteúdo. A análise habilita
+a limpeza somente para a seleção atual; trocar categoria, comportamento ou fixados
+invalida a estimativa. A confirmação recalcula os alvos antes de executar.
+
+`ui/molecules/segmented_select.py` mantém seleção exclusiva, um ponto de tabulação
+por grupo e navegação por setas/Home/End. `ui/molecules/toggle.py` preserva o estado,
+o teclado e a acessibilidade nativa de QCheckBox ao desenhar o switch. Em larguras
+menores, os comportamentos e as ações se empilham e o botão de desinstalação quebra
+seu texto, mantendo a rolagem vertical.
+
+As prévias da página são reproduzíveis com
+`.venv/bin/python tools/render_preferences.py --maintenance` e ficam em
+`artifacts/preferences-{dark,light}-maintenance.png`. A revisão visual incluiu os
+dois temas e a janela mínima de 820 × 580 a 150%, sem rolagem horizontal.
+
+As descrições das opções reservam a altura da maior variante na largura e fonte
+atuais; o status reserva ao menos duas linhas. Isso evita deslocar os painéis e
+alternar a rolagem quando o texto muda. Trocar opções atualiza somente os ícones
+das categorias cuja seleção mudou, sem reaplicar a aparência ao restante da página.
+O reset de fixados ao voltar para sobras bloqueia o sinal interno para não executar
+a mesma atualização duas vezes. Mudanças reais de tema/escala continuam recalculando
+a apresentação e a quebra de linhas.
+
+Validação desta correção em 27/10/2026: teste de regressão de geometria falhou antes
+da correção e passou depois; suíte com 226 testes, 214 aprovados e 12 ignorados.
+Em Cocoa nativo, 72 combinações de seleção, tema, escala (100%/150%) e tamanho
+(820 × 580, 900 × 760, 1040 × 820) mantiveram posições dos botões/painéis e faixa de
+rolagem estáveis entre opções. A mensagem de timeout do serviço TSM relatada não
+foi reproduzida nessa execução; sua relação com o sintoma não foi confirmada.
+
+### Confirmações de manutenção
+
+`ui/organisms/maintenance_confirmation.py` separa o resumo da operação da sua
+apresentação. Os factories de prune e desinstalação descrevem efeitos e itens
+preservados conforme categoria, modo e fixados, sem alterar o serviço de limpeza.
+O modal usa título com ícone, lista de efeitos, lista de preservação, detalhes
+monoespaçados selecionáveis e botão destrutivo preenchido. A janela de Preferências
+fica escurecida enquanto a confirmação está aberta; o sombreado é removido ao sair.
+
+Cancelar é o foco e a ação padrão inicial. Esc, X e Cancelar rejeitam a confirmação;
+Enter só confirma depois de focar explicitamente o botão destrutivo. Os detalhes
+longos têm quebra de linha e rolagem, mantendo as ações visíveis em escala ampliada.
+Os resumos de sobras descrevem compactação/coleta de órfãos, preservando a distinção
+em relação a apagar conteúdo. Valores, fixados e caminhos vêm da análise real.
+
+Prévias com dados fictícios são reproduzíveis com
+`.venv/bin/python tools/render_preferences.py --confirmations`, gerando
+`artifacts/confirmation-{dark,light}-{prune,uninstall}.png`. Os cinco testes em
+`tests/test_maintenance_confirmation.py` passaram também em Cocoa nativo, cobrindo
+fechamento, aceitação explícita, teclado, escopo dos resumos e caminhos longos em 150%.
+
+### Progresso e encerramento na desinstalação
+
+`ui/organisms/uninstall_progress.py` executa no runtime independente do helper e
+mantém visíveis as etapas após encerrar a aplicação original. O indicador da página
+permanece ativo durante preparação/passagem ao helper, com rolagem até o progresso.
+O sinal `helper-ready` permite à interface pedir seu próprio `QApplication.quit()`;
+a proteção de fechamento das Preferências libera apenas esse encerramento planejado.
+O worker aguarda o PID/identidade original terminar antes de adquirir a barreira e
+apagar dados. Um registro de processo ausente não permite pular essa verificação.
+
+O progresso é indeterminado durante o trabalho, apresenta o resultado verificado e
+fecha sozinho no sucesso. Falhas mantêm a janela e o relatório disponíveis. Sair
+durante a operação é bloqueado; código de saída zero sem confirmação de passagem
+não produz uma mensagem de conclusão. O supervisor evita repetir o resultado já
+apresentado pela interface independente.
+
+Validação em 27/10/2026: suíte de 238 testes (226 aprovados/12 ignorados), mais três
+testes da janela de progresso em Cocoa. Uma integração nativa com dois processos
+confirmou a ordem janela pronta → GUI original encerrada → dados isolados removidos
+→ helper fechado, inclusive sem registro da GUI original. A área de transferência
+foi substituída por um mock; nenhum dado pessoal foi usado nessa validação.

@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from clipx.maintenance_lock import writer
 
 from clipx.platforms.paths import PlatformPaths
 from clipx.updates import UpdateError, architecture
@@ -144,31 +145,25 @@ def prepare_install(installer, version, folder):
     return PreparedInstall(folder, result, ('/usr/bin/clipx', 'tray'), script)
 
 
+@writer
 def launch_install(prepared):
     """Start an unprivileged supervisor before normal Qt shutdown releases locks."""
-    from PyQt6.QtCore import QProcess, QIODevice, QProcessEnvironment
+    from clipx.maintenance_lock import inherited_activity
     prepared.result.parent.mkdir(parents=True, exist_ok=True)
     prepared.result.unlink(missing_ok=True)
     helper = prepared.folder / 'supervisor.sh'
     template = Path(__file__).parent / 'scripts' / 'updates' / 'supervisor.sh'
     shutil.copyfile(template, helper)
     helper.chmod(0o700)
-    # QProcess.startDetached inherits Qt's environment; passing values as argv
-    # keeps shell metacharacters in paths entirely inert.
     arguments = [str(helper), str(os.getpid()), str(prepared.folder), str(prepared.result),
                  str(prepared.transaction), prepared.privileged_command, *prepared.restart]
-    process = QProcess()
-    environment = QProcessEnvironment()
-    for key, value in native_environment().items():
-        environment.insert(key, value)
-    process.setProcessEnvironment(environment)
-    process.setProgram('/bin/sh')
-    process.setArguments(arguments)
-    process.setStandardOutputFile(str(prepared.folder / 'helper.log'))
-    process.setStandardErrorFile(str(prepared.folder / 'helper.log'), QIODevice.OpenModeFlag.Append)
-    success, pid = process.startDetached()
-    if not success:
-        raise UpdateError('Não foi possível iniciar o instalador. O ClipX permanece aberto.')
+    try:
+        with inherited_activity() as lease, (prepared.folder / 'helper.log').open('a') as log:
+            subprocess.Popen(['/bin/sh', *arguments], env=native_environment(),
+                             start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=log, stderr=log, pass_fds=(lease,))
+    except OSError as exc:
+        raise UpdateError('Não foi possível iniciar o instalador. O ClipX permanece aberto.') from exc
 
 
 def read_install_result():

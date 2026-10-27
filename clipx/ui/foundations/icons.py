@@ -12,6 +12,14 @@ from PyQt6.QtSvg import QSvgRenderer
 from clipx.ui.foundations.theme import TEXT_SECONDARY
 
 PATHS = {
+    'x': '<path d="m6 6 12 12M6 18 18 6"/>',
+    'check': '<path d="m4 12 5 5L20 6"/>',
+    'layers': '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',
+    'type': '<path d="M4 5h16M12 5v15M8 20h8M4 5v3M20 5v3"/>',
+    'trash': '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+    'eraser': '<path d="m15 3 6 6-11 12H6l-4-4L15 3ZM8 10l7 7M10 21h12"/>',
+    'alert': '<path d="m12 3 10 18H2L12 3ZM12 9v5M12 17v.5"/>',
+    'scan': '<path d="M8 3H4v4M16 3h4v4M4 17v4h4M20 17v4h-4"/><circle cx="11" cy="11" r="4"/><path d="m14 14 3 3"/>',
     'image': '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m21 15-6-6L3 21"/>',
     'command': '<path d="M8 8h8v8H8zM8 8H5a3 3 0 1 1 3-3v3Zm8 0V5a3 3 0 1 1 3 3h-3Zm0 8h3a3 3 0 1 1-3 3v-3Zm-8 0v3a3 3 0 1 1-3-3h3Z"/>',
     'globe': '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a18 18 0 0 1 0 18 18 18 0 0 1 0-18Z"/>',
@@ -118,9 +126,10 @@ def loading_icon(size, color, angle):
 
 
 def refresh_lucide_button(button, values):
-    """Render original Lucide assets with semantic color and logical scaling.
+    """Render bundled Lucide assets or built-in glyphs with semantic colors.
 
-    The icon name is read from the button's ``lucideIcon`` property. The color
+    ``glyphName`` selects a built-in glyph, otherwise ``lucideIcon`` selects
+    a bundled asset. ``iconRole`` can override the built-in glyph's color. The color
     follows the semantic palette (primary text when checked, secondary
     otherwise) and the size is the 18 px base scaled by ``values['scale']``.
     The rendered pixmap is assigned together with a matching icon size.
@@ -133,6 +142,12 @@ def refresh_lucide_button(button, values):
     colors = palette_for(values)
     color = colors['text' if button.isChecked() else 'secondary']
     size = round(18 * values['scale'] / 100)
+    if button.property('glyphName'):
+        if button.property('iconRole'):
+            color = colors[button.property('iconRole')]
+        button.setIcon(icon(button.property('glyphName'), size, color))
+        button.setIconSize(QSize(size, size))
+        return
     svg = _lucide_svg(button.property('lucideIcon')).replace('currentColor', color)
     pixmap = QPixmap(size * 2, size * 2)
     pixmap.fill(Qt.GlobalColor.transparent)

@@ -244,7 +244,7 @@ Priority: optional
 Architecture: {arch}
 Maintainer: {maintainer}
 Installed-Size: {installed_size}
-Depends: ca-certificates, libc6 (>= 2.39), libglib2.0-0t64, libgssapi-krb5-2, libglib2.0-bin, libgl1, libegl1, libopengl0, libdbus-1-3, libfontconfig1, libfreetype6, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, wl-clipboard, xclip
+Depends: zenity, procps, ca-certificates, libc6 (>= 2.39), libglib2.0-0t64, libgssapi-krb5-2, libglib2.0-bin, libgl1, libegl1, libopengl0, libdbus-1-3, libfontconfig1, libfreetype6, libx11-6, libx11-xcb1, libxext6, libxrender1, libxi6, libsm6, libice6, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-render-util0, libxcb-xinerama0, libxcb-xkb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, wl-clipboard, xclip
 Recommends: desktop-file-utils, pkexec
 Suggests: gnome-shell-extension-appindicator, wtype, ydotool
 Description: Histórico local da área de transferência

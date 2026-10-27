@@ -13,6 +13,9 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '_capture':
         del sys.argv[1]
         from clipx.capture import main
+    elif len(sys.argv) > 1 and sys.argv[1] == '_uninstall':
+        del sys.argv[1]
+        from clipx.uninstall import main
     elif len(sys.argv) > 1 and sys.argv[1] == '_self-test':
         del sys.argv[1]
         from clipx.bundle_check import main

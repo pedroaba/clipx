@@ -81,6 +81,158 @@ class PreferencesTests(unittest.TestCase):
         self.addCleanup(self.page.deleteLater)
         self.addCleanup(self.page.cancel_changes)
 
+    def test_maintenance_defaults_preserve_pins_preferences_and_clipboard(self):
+        maintenance = self.page.maintenance_page
+        self.page.select_section('maintenance')
+        self.assertTrue(self.page.footer.reset.isHidden())
+        self.assertEqual(maintenance.options().target, 'all')
+        self.assertEqual(maintenance.options().mode, 'orphans')
+        self.assertFalse(maintenance.include_pinned.isEnabled())
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('content'))
+        self.assertTrue(maintenance.include_pinned.isEnabled())
+        self.assertFalse(maintenance.include_pinned.isChecked())
+        self.page.restore_section()
+        self.assertFalse(self.page.dirty())
+
+    def wait_maintenance(self):
+        from PyQt6.QtTest import QTest
+        for _ in range(500):
+            if not self.page.maintenance_page.busy:
+                return
+            QTest.qWait(10)
+        self.fail('Maintenance worker did not finish')
+
+    def test_maintenance_cancel_and_confirm_refresh_the_history(self):
+        maintenance = self.page.maintenance_page
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('content'))
+        with patch.object(maintenance, 'confirmation', return_value=False):
+            maintenance.confirm_prune()
+            self.wait_maintenance()
+        self.assertEqual(len(self.window.storage.get_clips()), 1)
+        with patch.object(maintenance, 'confirmation', return_value=True):
+            maintenance.confirm_prune()
+            self.wait_maintenance()
+        self.assertEqual(self.window.storage.get_clips(), [])
+        self.assertIn('1 item', maintenance.status.text())
+        self.assertFalse(self.page.dirty())
+
+    def test_uninstall_cancel_never_stages_or_launches_helper(self):
+        from clipx.maintenance import MaintenanceResult
+        maintenance = self.page.maintenance_page
+        with patch('clipx.uninstall.inventory', return_value=MaintenanceResult()), patch.object(maintenance, 'confirmation', return_value=False), patch('clipx.uninstall.prepare_helper') as prepare:
+            maintenance.confirm_uninstall()
+            self.wait_maintenance()
+            prepare.assert_not_called()
+
+    def test_uninstall_keeps_loading_until_helper_ready_then_requests_quit(self):
+        from PyQt6.QtTest import QTest
+        from clipx.maintenance import MaintenanceResult
+        maintenance = self.page.maintenance_page
+        folder = Path(self.temp.name) / 'helper'
+        folder.mkdir()
+        process = Mock()
+        process.poll.return_value = None
+        try:
+            with patch('clipx.uninstall.inventory', return_value=MaintenanceResult()), patch.object(maintenance, 'confirmation', return_value=True), patch('clipx.uninstall.prepare_helper', return_value=(folder, [], {})), patch('clipx.uninstall.launch_helper', return_value=process) as launch:
+                maintenance.confirm_uninstall()
+                for _ in range(500):
+                    QTest.qWait(10)
+                    if launch.called and maintenance.worker is None:
+                        break
+                self.assertTrue(launch.called)
+            maintenance.uninstall_timer.stop()
+            self.assertFalse(maintenance.progress.isHidden())
+            self.assertTrue(maintenance.busy)
+            with patch.object(self.app, 'quit') as quit_app:
+                maintenance.check_uninstaller()
+                quit_app.assert_not_called()
+                (folder / 'helper-ready').write_text('ready')
+                maintenance.check_uninstaller()
+                quit_app.assert_called_once()
+                self.assertTrue(self.page._maintenance_shutdown)
+                maintenance.check_uninstaller()
+                quit_app.assert_called_once()
+        finally:
+            maintenance.uninstall_timer.stop()
+            maintenance.uninstaller = None
+            self.page._maintenance_shutdown = False
+            self.page._confirmed_close = False
+
+    def test_helper_exit_without_handoff_never_claims_completion(self):
+        maintenance = self.page.maintenance_page
+        folder = Path(self.temp.name) / 'helper-exited'
+        folder.mkdir()
+        maintenance.uninstall_folder = folder
+        maintenance.uninstaller = Mock()
+        maintenance.uninstaller.poll.return_value = 0
+        maintenance.check_uninstaller()
+        self.assertIn('não foi confirmada', maintenance.status.text())
+        self.assertNotIn('concluída', maintenance.status.text())
+        self.assertIsNone(maintenance.uninstaller)
+
+    def test_segmented_categories_support_keyboard_and_exclusive_selection(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        maintenance = self.page.maintenance_page
+        group = maintenance.target
+        self.assertEqual(group.currentData(), 'all')
+        QTest.keyClick(group.buttons[0], Qt.Key.Key_Right)
+        self.assertEqual(group.currentData(), 'data')
+        QTest.keyClick(group.buttons[1], Qt.Key.Key_End)
+        self.assertEqual(group.currentData(), 'images')
+        QTest.keyClick(group.buttons[2], Qt.Key.Key_Home)
+        self.assertEqual(group.currentData(), 'all')
+        QTest.keyClick(group.buttons[0], Qt.Key.Key_Down)
+        self.assertEqual(group.currentData(), 'data')
+        QTest.keyClick(group.buttons[1], Qt.Key.Key_Up)
+        self.assertEqual(group.currentData(), 'all')
+        self.assertEqual(sum(button.isChecked() for button in group.buttons), 1)
+
+    def test_cleanup_requires_analysis_for_current_selection(self):
+        maintenance = self.page.maintenance_page
+        self.assertFalse(maintenance.prune.isEnabled())
+        maintenance.analyze_data()
+        self.wait_maintenance()
+        self.assertTrue(maintenance.prune.isEnabled())
+        maintenance.target.setCurrentIndex(maintenance.target.findData('images'))
+        self.assertFalse(maintenance.prune.isEnabled())
+        maintenance.analyze_data()
+        self.wait_maintenance()
+        self.assertTrue(maintenance.prune.isEnabled())
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('content'))
+        self.assertFalse(maintenance.prune.isEnabled())
+
+    def test_pin_toggle_supports_space_and_resets_when_returning_to_orphans(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        maintenance = self.page.maintenance_page
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('content'))
+        QTest.keyClick(maintenance.include_pinned, Qt.Key.Key_Space)
+        self.assertTrue(maintenance.options().include_pinned)
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('orphans'))
+        self.assertFalse(maintenance.options().include_pinned)
+        self.assertFalse(maintenance.include_pinned.isEnabled())
+
+    def test_prune_option_text_keeps_cards_and_actions_stationary(self):
+        from PyQt6.QtTest import QTest
+        self.page.select_section('maintenance')
+        self.page.resize(900, 760)
+        self.page.show()
+        maintenance = self.page.maintenance_page
+        maintenance.mode.setCurrentIndex(maintenance.mode.findData('content'))
+        QTest.qWait(50)
+        baseline = (maintenance.analyze.y(), maintenance.danger_card.y(), maintenance.clean_card.height())
+        for target, mode, pins in [('data', 'orphans', False), ('images', 'content', False),
+                                   ('all', 'content', True), ('data', 'content', True),
+                                   ('all', 'orphans', False)]:
+            with self.subTest(target=target, mode=mode, pins=pins):
+                maintenance.target.setCurrentIndex(maintenance.target.findData(target))
+                maintenance.mode.setCurrentIndex(maintenance.mode.findData(mode))
+                maintenance.include_pinned.setChecked(pins)
+                QTest.qWait(30)
+                self.assertEqual((maintenance.analyze.y(), maintenance.danger_card.y(),
+                                  maintenance.clean_card.height()), baseline)
+
     def choose(self, key, value):
         """Select ``value`` in the combo box control registered under ``key``.
 

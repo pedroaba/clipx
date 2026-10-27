@@ -6,6 +6,7 @@ codes and modifier masks, and registers or unregisters individual hotkeys.
 `MacOSGlobalShortcut` is the Qt-facing driver that persists the chosen sequence
 in ``settings.json`` and re-emits activations as a queued Qt signal.
 """
+from clipx.maintenance_lock import writer
 import ctypes as C
 import json
 from pathlib import Path
@@ -356,6 +357,7 @@ class MacOSGlobalShortcut(QObject):
         finally:
             Path(name).unlink(missing_ok=True)
 
+    @writer
     def write(self, sequence):
         """Persist and activate a new shortcut, replacing the current one.
 

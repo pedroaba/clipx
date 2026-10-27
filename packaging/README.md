@@ -163,6 +163,43 @@ injetadas pelo PyInstaller são removidas do ambiente dos comandos do sistema.
 O DEB depende de `ca-certificates` e recomenda `pkexec`; sem este último, continua
 disponível o download para instalação manual.
 
+## Limpeza e desinstalação integrada
+
+O DEB também depende de `procps` (identidade e encerramento dos processos do usuário)
+e `zenity` (resultado independente após encerrar a interface). A remoção integrada
+exige `pkexec`; sua ausência é informada antes de apagar dados. O `postrm` continua
+sem percorrer ou apagar diretórios pessoais: a limpeza é solicitada pela conta
+atual em Preferências ou com `clipx uninstall`.
+
+`clipx/scripts/maintenance/supervisor.sh` acompanha os recursos do bundle. Antes
+de remover a instalação, o desinstalador copia o runtime congelado para um diretório
+temporário privado; assim Python, Qt e as bibliotecas continuam disponíveis depois
+da remoção do bundle/DEB. A cópia executa uma interface Qt independente com progresso
+por etapa. A interface original solicita sua própria saída depois que essa janela
+fica pronta; o worker confirma o término do PID original antes de apagar dados,
+mesmo se faltar seu registro de processo. A janela de progresso fecha automaticamente
+no sucesso. O supervisor remove a cópia após sucesso e usa ferramentas do sistema
+como fallback se a interface não conseguir apresentar um resultado. Encerrar o
+processo sem resultado explícito nunca é tratado como sucesso. Na execução pelo código-fonte,
+o repositório e seu interpretador são preservados.
+
+Uma barreira por usuário impede gravações e atualizações durante prune ou
+desinstalação. O supervisor de atualização herda um descritor com lease compartilhado,
+mantendo essa exclusão também depois que o processo principal encerra.
+
+Validação em 27/10/2026: suíte de 222 testes no macOS ARM64 e no Ubuntu ARM64 em
+container, com 210 aprovados e 12 ignorados em cada ambiente. Os 10 testes nativos
+macOS passaram separadamente em Cocoa; a tentativa inicial em offscreen foi
+incompatível e foi substituída pela execução nativa. Os temas claro/escuro da tela
+de manutenção foram inspecionados em renderizações.
+O DMG foi gerado, montado e validado pelo smoke test. Sua cópia independente executou
+o dispatch do desinstalador; uma cópia descartável do app e dados isolados foram
+removidos pelo backend, substituindo a limpeza do clipboard para preservar o clipboard
+real da máquina. O DEB foi gerado, instalado, submetido a prune e removido pelo helper
+em um container X11, com APT real e uma substituição de `pkexec` restrita ao container.
+A autorização administrativa real em desktop e os fluxos em GNOME/Wayland continuam
+dependendo de validação nesses ambientes; nenhuma instalação pessoal foi removida.
+
 O smoke test verifica helper, página de atualizações sem consulta automática e
 certificados HTTPS. Assinatura Developer ID/notarização continuam dependendo das
 credenciais Apple; a atualização não remove quarentena nem contorna Gatekeeper.

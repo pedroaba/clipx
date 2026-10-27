@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from clipx.maintenance_lock import writer
 
 
 class PlatformPaths:
@@ -81,6 +82,7 @@ class PlatformPaths:
             raise RuntimeError('Diretório de runtime do ClipX não é privado.')
         return folder
 
+    @writer
     def migrate_legacy(self):
         """Import macOS history and settings written by older releases.
 

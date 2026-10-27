@@ -16,8 +16,10 @@ if sys.platform == "linux":
 from clipx.daemon import ClipboardDaemon, run_standalone_daemon
 from clipx.detector import ContentDetector
 from clipx.storage import Storage
+from clipx.maintenance_lock import registered_process
 
 
+@registered_process()
 def run_gui(start_hidden=False):
     """Run the Qt desktop application, tray, and background capture daemon.
 
@@ -162,10 +164,25 @@ def main():
         "--all", action="store_true", help="Clear all items including pinned items"
     )
 
+    prune = subparsers.add_parser('prune', help='Limpar conteúdo ou apenas sobras do ClipX')
+    prune.add_argument('--target', choices=('data', 'images', 'all'), default='all')
+    prune.add_argument('--mode', choices=('orphans', 'content'), default='orphans')
+    prune.add_argument('--include-pinned', action='store_true')
+    for command in (prune, subparsers.add_parser('uninstall', help='Desinstalar ClipX e apagar meus dados')):
+        command.add_argument('--dry-run', action='store_true')
+        command.add_argument('--yes', action='store_true')
+
     args = parser.parse_args()
     if sys.platform not in ("linux", "darwin"):
         parser.error("Sistema não suportado. Use Linux ou macOS 14+.")
 
+    if args.command in ('prune', 'uninstall'):
+        return run_maintenance(args, parser)
+    with registered_process():
+        return dispatch(args)
+
+
+def dispatch(args):
     if args.command == "daemon":
         run_standalone_daemon()
     elif args.command == "tray":
@@ -184,5 +201,41 @@ def main():
         run_gui()
 
 
+def run_maintenance(args, parser):
+    import sqlite3
+    import subprocess
+    from clipx.maintenance import MaintenanceService, PruneOptions
+    try:
+        if args.command == 'prune':
+            options = PruneOptions(args.target, args.mode, args.include_pinned)
+            service = MaintenanceService()
+            estimate = service.inspect(options)
+        else:
+            from clipx.uninstall import inventory
+            estimate = inventory()
+        print(estimate.summary(estimate=True), flush=True)
+        for path in estimate.paths:
+            print(path, flush=True)
+        if args.dry_run:
+            return 0 if estimate.ok else 1
+        if not args.yes:
+            if not sys.stdin.isatty():
+                parser.error('Sem terminal interativo: use --yes para confirmar ou --dry-run para inspecionar.')
+            message = ('Apagar os dados selecionados?' if args.command == 'prune' else
+                       'Desinstalar ClipX e apagar histórico, fixados, imagens próprias, preferências, backups e clipboard?')
+            if input(message + ' [s/N] ').strip().lower() not in ('s', 'sim'):
+                print('Operação cancelada.')
+                return 0
+        if args.command == 'prune':
+            result = service.prune(options, progress=print)
+            print(result.summary())
+            return 0 if result.ok else 1
+        from clipx.uninstall import prepare_helper, launch_helper
+        return launch_helper(prepare_helper())
+    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        print('Não foi possível concluir: ' + str(exc), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

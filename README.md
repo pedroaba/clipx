@@ -58,6 +58,67 @@ A recuperação publica os pixels da imagem, sem copiar seu caminho como texto o
 
 Outros tipos de arquivo, texto rico e sincronização não estão incluídos.
 
+## Limpeza e desinstalação
+
+Em **Preferências → Dados e desinstalação**, escolha **Dados**, **Imagens** ou
+**Tudo**, e depois **Remover apenas sobras** (padrão) ou **Apagar conteúdo**.
+A análise mostra itens, arquivos e uma estimativa conservadora do espaço
+recuperável; os alvos são recalculados antes da execução.
+
+- **Dados:** apagar conteúdo remove entradas de texto, código, JSON, links e
+  cores. Remover sobras compacta o SQLite sem excluir histórico válido.
+- **Imagens:** apagar conteúdo remove entradas de imagem e libera os PNGs
+  próprios sem referências. Remover sobras coleta somente PNGs próprios órfãos,
+  registros de propriedade sem arquivos e capturas temporárias interrompidas.
+- **Tudo:** combina as duas categorias. Fixados são preservados ao apagar
+  conteúdo, a menos que **Incluir fixados** seja marcado.
+
+O prune mantém aplicativo, preferências, atalhos e clipboard. Imagens externas,
+arquivos sem propriedade comprovada e imagens ainda referenciadas por fixados
+permanecem preservados. A captura continua observando mudanças, mas suas gravações
+ficam pausadas durante a manutenção; o último conteúdo não é recapturado apenas
+porque a limpeza terminou.
+
+O terminal oferece o mesmo serviço:
+
+```bash
+clipx prune --dry-run
+clipx prune --target images --mode orphans
+clipx prune --target data --mode content
+clipx prune --target all --mode content --include-pinned
+```
+
+Os comandos pedem confirmação. Para execução não interativa, use `--yes`.
+Sem opções, `prune` usa `--target all --mode orphans`. Falhas parciais são
+informadas e retornam código diferente de zero; executar novamente permite
+coletar arquivos que não puderam ser removidos anteriormente.
+
+**Desinstalar ClipX e apagar meus dados** remove o aplicativo e os dados da
+conta atual, incluindo histórico fixado, PNGs próprios, bancos e auxiliares,
+preferências, backups de migração, locais legados conhecidos e o conteúdo atual
+do clipboard. Imagens originais externas permanecem intactas. Também disponível:
+
+```bash
+clipx uninstall --dry-run
+clipx uninstall
+```
+
+Builds empacotados preparam uma cópia temporária independente do desinstalador,
+que precisa de espaço em disco. O helper encerra o ClipX e sua captura antes da
+exclusão. A preparação mostra um indicador de atividade; uma janela independente
+acompanha as etapas após o aplicativo encerrar e fecha automaticamente no sucesso.
+Se a instância original não encerrar, os dados não são apagados e o fluxo informa
+falha. No macOS, remove o bundle validado; no Linux, solicita a remoção do DEB
+pelo APT via `pkexec`. A autorização administrativa pode ser necessária. Se essa
+etapa falhar após a limpeza, o resultado informa que os dados já foram apagados
+e o aplicativo permanece instalado. Falhas preservam um relatório privado no
+diretório temporário indicado; sucesso remove a cópia temporária.
+
+Em execução pelo código-fonte, a desinstalação mantém repositório, ambiente Python
+e ferramentas compartilhadas. Remover o `.app` pelo Finder ou remover o pacote
+diretamente não executa esta limpeza pessoal. Backups externos e apagamento
+físico irrecuperável não fazem parte do fluxo.
+
 ## macOS
 
 Compatibilidade-alvo: **macOS 14+**, com validação nativa inicial em **macOS 27 ARM64**. As versões anteriores e Macs Intel ainda precisam de validação em hardware correspondente.

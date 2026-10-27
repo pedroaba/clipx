@@ -16,6 +16,7 @@ import threading
 from typing import Optional
 
 from clipx.storage import Storage
+from clipx.maintenance_lock import registered_process
 from clipx.platforms import get_platform
 from clipx.platforms.base import Result, Status
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -157,6 +158,7 @@ class ClipboardDaemon(QObject):
         logger.info("ClipX Clipboard Daemon stopped.")
 
 
+@registered_process()
 def run_standalone_daemon():
     """Run the clipboard daemon until a termination signal arrives.
 
