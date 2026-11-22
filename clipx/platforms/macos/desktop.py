@@ -1,26 +1,35 @@
-"""App activation and authorized paste into the remembered application.
-
-`MacOSDesktopDriver` records the frontmost application before ClipX shows its
-window, then reactivates that application and posts a synthetic Command-V
-through Quartz. Posting keyboard events requires macOS Accessibility trust, and
-each activation attempt is guarded by a generation counter so a stale target
-cannot receive the paste.
-"""
+"""Restore the original macOS window and field before sending Command-V."""
 import os
 import time
+from dataclasses import dataclass
+
 from clipx.platforms.base import Result, Status
+
+from .focus import MacOSFocus
+
+_MANUAL = 'Conteúdo copiado. '
+_ANSI_V = 9
+
+
+@dataclass(frozen=True)
+class PasteTarget:
+    app: object
+    pid: int
+    accessibility_app: object
+    window: object
+    element: object
 
 
 class MacOSDesktopDriver:
     """Drive AppKit activation and Quartz paste into a previous application.
 
     Attributes:
-        target: Remembered `NSRunningApplication`, or None.
+        target: Original application, window and focused element, or None.
         _generation (int): Incremented whenever the target changes or the
             driver stops, invalidating in-flight paste attempts.
     """
 
-    def __init__(self, appkit=None, quartz=None, permissions=None):
+    def __init__(self, appkit=None, quartz=None, permissions=None, focus=None):
         """Initialize the driver with optional native dependencies.
 
         Args:
@@ -28,10 +37,12 @@ class MacOSDesktopDriver:
             quartz: Quartz module substitute for tests.
             permissions: Permission provider exposing ``can_paste()`` and
                 ``request_paste()``.
+            focus: Accessibility adapter substitute for tests.
         """
         self._appkit = appkit
         self._quartz = quartz
         self._permissions = permissions
+        self._focus = focus
         self.target = None
         self._generation = 0
 
@@ -79,16 +90,30 @@ class MacOSDesktopDriver:
         """
         return ''
 
-    def remember_target(self):
-        """Record the frontmost application unless it is ClipX itself.
+    def _frontmost_application(self):
+        return self.appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
 
-        Also increments the generation, invalidating any paste attempt that is
-        waiting for a different target.
-        """
-        app = self.appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
-        if app is not None and app.processIdentifier() != os.getpid():
-            self.target = app
-        self._generation += 1
+    def _frontmost_pid(self):
+        app = self._frontmost_application()
+        return app.processIdentifier() if app is not None else None
+
+    def remember_target(self):
+        """Capture the window and field while the original application owns focus."""
+        self.cancel_paste()
+        self.target = None
+        app = self._frontmost_application()
+        if app is None or app.processIdentifier() == os.getpid() or not self.permissions.can_paste():
+            return
+        pid = app.processIdentifier()
+        if self._focus is None:
+            self._focus = MacOSFocus()
+        accessibility_app = self._focus.application(pid)
+        if accessibility_app is None:
+            return
+        window = self._focus.read(accessibility_app, MacOSFocus.WINDOW)
+        element = self._focus.read(accessibility_app, MacOSFocus.ELEMENT)
+        if window is not None and element is not None and self._frontmost_pid() == pid:
+            self.target = PasteTarget(app, pid, accessibility_app, window, element)
 
     def open_search(self, window, activation_token=''):
         """Show and activate the search window over other applications.
@@ -109,100 +134,127 @@ class MacOSDesktopDriver:
         window.activateWindow()
 
     def request_paste_permission(self):
-        """Prompt for Accessibility trust and report the current state.
+        """Request the system authorization only from the explicit menu action."""
+        if self.permissions.request_paste():
+            if self.quartz.CGPreflightPostEventAccess() or self.quartz.CGRequestPostEventAccess():
+                return Result()
+        return Result(Status.PERMISSION_REQUIRED,
+            'Adicione o ClipX ou seu lançador em Ajustes do Sistema → Privacidade e Segurança → Acessibilidade.')
 
-        Returns:
-            Result: `Status.READY` when trust is already granted, otherwise
-            `Status.PERMISSION_REQUIRED` with guidance.
-        """
-        granted = self.permissions.request_paste()
-        return Result() if granted else Result(Status.PERMISSION_REQUIRED,
-            'Autorize o interpretador/aplicativo lançador nos ajustes de privacidade do macOS e tente novamente.')
+    def _can_post(self):
+        return self.permissions.can_paste() and self.quartz.CGPreflightPostEventAccess()
+
+    def _post_paste(self, pid):
+        q = self.quartz
+        down = q.CGEventCreateKeyboardEvent(None, _ANSI_V, True)
+        up = q.CGEventCreateKeyboardEvent(None, _ANSI_V, False)
+        if down is None or up is None:
+            return Result(Status.ERROR, _MANUAL + 'Falha ao criar o atalho de colagem. Use ⌘V.', 'paste_event_failed')
+        for event in (down, up):
+            q.CGEventSetFlags(event, q.kCGEventFlagMaskCommand)
+            q.CGEventPostToPid(pid, event)
+        return Result()
 
     def paste_to_previous(self, callback=None):
-        """Paste into the remembered application with a synthetic Command-V.
-
-        Fails immediately without Accessibility trust or when the target is
-        missing or terminated. Otherwise activates the target and waits up to
-        one second for it to become frontmost. The paste is aborted if the
-        target changes, terminates, or loses trust before the key events are
-        posted. With ``callback`` the waiting happens through 25 ms Qt timer
-        ticks and the method returns a pending success; without it the wait is
-        a blocking sleep loop. The synchronous loop is intended for non-Qt
-        callers and deterministic native tests.
-
-        Args:
-            callback (Callable[[Result], None] | None): Receives the final
-                result asynchronously when provided.
-
-        Returns:
-            Result: Immediate failure or pending `Status.READY`.
-        """
-        q = self.quartz
-        if not self.permissions.can_paste():
-            result = Result(Status.PERMISSION_REQUIRED,
-                'Texto copiado. Autorize a colagem pelo menu da bandeja → Autorizar colagem no macOS.')
-            if callback:
-                callback(result)
-            return result
+        """Restore the captured field, then send Command-V to its owning PID."""
         target = self.target
-        if target is None or target.isTerminated():
-            result = Result(Status.UNAVAILABLE, 'Texto copiado. O aplicativo de destino não está disponível.')
-            if callback:
-                callback(result)
-            return result
         generation = self._generation
-        if not target.activateWithOptions_(2):
-            result = Result(Status.UNAVAILABLE, 'Texto copiado. Não foi possível ativar o aplicativo de destino.')
-            if callback:
+
+        def finish(result):
+            if callback is not None:
                 callback(result)
             return result
+
+        permission = Result(Status.PERMISSION_REQUIRED,
+            _MANUAL + 'Use Autorizar colagem no macOS no menu do ClipX ou cole com ⌘V.',
+            'paste_permission_required')
+        unavailable = Result(Status.UNAVAILABLE,
+            _MANUAL + 'O foco no campo original não pôde ser confirmado. Use ⌘V.',
+            'paste_focus_unavailable')
+        cancelled = Result(Status.UNAVAILABLE,
+            _MANUAL + 'Colagem cancelada porque o foco mudou. Use ⌘V.', 'paste_cancelled')
+        if not self._can_post():
+            return finish(permission)
+        if target is None or target.app.isTerminated():
+            return finish(unavailable)
+
+        own_pid = os.getpid()
+        current = self._frontmost_pid()
+        if current == own_pid:
+            clipx_app = self.appkit.NSRunningApplication.currentApplication()
+            self.appkit.NSApplication.sharedApplication().yieldActivationToApplication_(target.app)
+            if not target.app.activateFromApplication_options_(clipx_app, 0):
+                return finish(unavailable)
+        elif current not in (None, target.pid):
+            return finish(cancelled)
+
         deadline = time.monotonic() + 1
+        focus = self._focus
+        raised_window = False
+        restored_element = False
+        reached_target = current == target.pid
 
         def attempt():
-            """Try one paste step.
-
-            Returns:
-                Result | None: Final status, or None when the target is not yet
-                frontmost and the deadline has not passed.
-            """
-            if generation != self._generation or target.isTerminated():
-                return Result(Status.UNAVAILABLE, 'Colagem cancelada: o destino mudou.')
-            current = self.appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
-            if current and current.processIdentifier() == target.processIdentifier():
-                if not self.permissions.can_paste():
-                    return Result(Status.PERMISSION_REQUIRED, 'Texto copiado. A permissão de colagem foi revogada.')
-                down = q.CGEventCreateKeyboardEvent(None, 9, True)
-                up = q.CGEventCreateKeyboardEvent(None, 9, False)
-                if down is None or up is None:
-                    return Result(Status.ERROR, 'Texto copiado. Não foi possível criar o evento de colagem.')
-                for event in (down, up):
-                    q.CGEventSetFlags(event, q.kCGEventFlagMaskCommand)
-                    q.CGEventPost(q.kCGHIDEventTap, event)
-                return Result()
+            nonlocal reached_target, raised_window, restored_element
+            if generation != self._generation or target.app.isTerminated():
+                return cancelled
+            current = self._frontmost_pid()
+            if current != target.pid and (reached_target or current not in (None, own_pid)):
+                return cancelled
             if time.monotonic() >= deadline:
-                return Result(Status.UNAVAILABLE, 'Texto copiado. O aplicativo de destino não recebeu foco.')
-            return None
+                return unavailable
+            if current != target.pid:
+                return None
+            reached_target = True
+            if not self._can_post():
+                return permission
 
-        if callback:
+            window = focus.read(target.accessibility_app, MacOSFocus.WINDOW)
+            if not focus.same(window, target.window):
+                if not raised_window and self._frontmost_pid() == target.pid:
+                    raised_window = True
+                    focus.raise_window(target.window)
+                return None
+
+            element = focus.read(target.accessibility_app, MacOSFocus.ELEMENT)
+            if self._frontmost_pid() != target.pid:
+                return cancelled
+            if not focus.same(element, target.element):
+                if not restored_element:
+                    restored_element = True
+                    focus.focus_element(target.element)
+                return None
+
+            if time.monotonic() >= deadline:
+                return unavailable
+            if not self._can_post():
+                return permission
+            return self._post_paste(target.pid)
+
+        if callback is not None:
             from PyQt6.QtCore import QTimer
+
             def tick():
-                """Run one attempt tick, rescheduling itself while pending."""
                 result = attempt()
                 if result is None:
                     QTimer.singleShot(25, tick)
                 else:
-                    callback(result)
+                    finish(result)
+
             QTimer.singleShot(25, tick)
             return Result()
-        # Synchronous path for non-Qt callers and deterministic native tests.
+
         while True:
             result = attempt()
             if result is not None:
                 return result
-            time.sleep(0.025)
+            time.sleep(.025)
+
+    def cancel_paste(self):
+        """Invalidate pending work while retaining the current search's target."""
+        self._generation += 1
 
     def stop(self):
-        """Forget the paste target and invalidate in-flight paste attempts."""
-        self._generation += 1
+        """Cancel any pending paste and release the captured Accessibility references."""
+        self.cancel_paste()
         self.target = None

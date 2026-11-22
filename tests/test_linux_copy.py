@@ -1,7 +1,7 @@
 """Regressions for GNOME startup completion, responsive copy and automatic paste."""
 import os
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-import subprocess
+import struct
 import tempfile
 import threading
 import time
@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import QApplication
 from clipx.platforms.base import Result, Status
 from clipx.platforms.linux.activation import finish_startup
 from clipx.platforms.linux.clipboard import LinuxClipboardDriver
-from clipx.platforms.linux.desktop import LinuxDesktopDriver, MANUAL_PASTE, is_gnome_wayland, paste_to_active_window
+from clipx.platforms.linux.desktop import LinuxDesktopDriver, MANUAL_PASTE
+from clipx.platforms.linux.paste import PasteKeyboard
 from clipx.platforms.linux.processes import helper_environment
 from clipx.services import ClipboardService
 from clipx.storage import Storage
@@ -30,11 +31,10 @@ class LinuxCopyTests(unittest.TestCase):
 
     def test_helpers_drop_launch_tokens_but_keep_session_credentials(self):
         with patch.dict(os.environ, {**GNOME, 'DESKTOP_STARTUP_ID': 'startup',
-                                     'XDG_ACTIVATION_TOKEN': 'native', 'YDOTOOL_SOCKET': '/tmp/input.sock'}):
+                                     'XDG_ACTIVATION_TOKEN': 'native'}):
             env = helper_environment()
             self.assertNotIn('DESKTOP_STARTUP_ID', env)
             self.assertNotIn('XDG_ACTIVATION_TOKEN', env)
-            self.assertEqual(env['YDOTOOL_SOCKET'], '/tmp/input.sock')
             self.assertEqual(env['DISPLAY'], ':0')
             self.assertEqual(os.environ['XDG_ACTIVATION_TOKEN'], 'native')
 
@@ -52,82 +52,69 @@ class LinuxCopyTests(unittest.TestCase):
                 self.assertNotIn('DESKTOP_STARTUP_ID', call.kwargs['env'])
                 self.assertNotIn('XDG_ACTIVATION_TOKEN', call.kwargs['env'])
 
-    def test_gnome_wayland_detection_ignores_xwayland_display(self):
-        with patch.dict(os.environ, GNOME):
-            self.assertTrue(is_gnome_wayland())
-        with patch.dict(os.environ, {**GNOME, 'XDG_SESSION_TYPE': 'x11'}):
-            self.assertFalse(is_gnome_wayland())
-        with patch.dict(os.environ, {**GNOME, 'XDG_CURRENT_DESKTOP': 'sway',
-                                     'XDG_SESSION_DESKTOP': 'sway', 'DESKTOP_SESSION': 'sway'}):
-            self.assertFalse(is_gnome_wayland())
+    def test_native_keyboard_reuses_device_and_sends_only_ctrl_v(self):
+        keyboard = PasteKeyboard()
+        with patch('clipx.platforms.linux.paste.os.open', return_value=42) as open_device, \
+             patch('clipx.platforms.linux.paste.fcntl.ioctl') as ioctl, \
+             patch('clipx.platforms.linux.paste.os.write', side_effect=lambda fd, data: len(data)) as write, \
+             patch('clipx.platforms.linux.paste.os.close') as close, \
+             patch('clipx.platforms.linux.paste.time.monotonic', side_effect=[0, 2, 3]):
+            self.assertTrue(keyboard.paste(threading.Event()))
+            self.assertTrue(keyboard.paste(threading.Event()))
+            keyboard.close()
+            keyboard.close()
+        open_device.assert_called_once_with('/dev/uinput', os.O_WRONLY | os.O_NONBLOCK)
+        self.assertIn((42, 0x40045565, 31), [call.args for call in ioctl.call_args_list])
+        self.assertIn((42, 0x40045565, 47), [call.args for call in ioctl.call_args_list])
+        self.assertEqual(ioctl.call_args.args, (42, 0x5502))
+        close.assert_called_once_with(42)
+        expected = [(1, 29, 1), (0, 0, 0), (1, 47, 1), (0, 0, 0),
+                    (1, 47, 0), (0, 0, 0), (1, 29, 0), (0, 0, 0)]
+        self.assertEqual(write.call_count, 2)
+        for call in write.call_args_list:
+            self.assertEqual([event[2:] for event in struct.iter_unpack('@llHHi', call.args[1])],
+                             expected)
 
-    def test_gnome_uses_ydotool_even_when_wtype_is_installed(self):
-        with patch.dict(os.environ, {**GNOME, 'DESKTOP_STARTUP_ID': 'startup', 'XDG_ACTIVATION_TOKEN': 'native'}), \
-             patch('shutil.which', return_value='/bin/tool'), patch('clipx.platforms.linux.desktop._run_paste_tool') as run:
-            run.return_value.returncode = 0
-            self.assertTrue(paste_to_active_window())
-            self.assertEqual(run.call_args.args[0][0], 'ydotool')
-            run.assert_called_once()
-
-    def test_other_wayland_sessions_fall_back_after_wtype_failure_or_timeout(self):
-        for failure in (SimpleNamespace(returncode=1, stderr='unsupported protocol'),
-                        subprocess.TimeoutExpired('wtype', 2), OSError('unavailable')):
-            with self.subTest(failure=type(failure).__name__), \
-                 patch.dict(os.environ, {'XDG_SESSION_TYPE': 'wayland', 'XDG_CURRENT_DESKTOP': 'sway',
-                                         'XDG_SESSION_DESKTOP': 'sway', 'DESKTOP_SESSION': 'sway'}), \
-                 patch('shutil.which', return_value='/bin/tool'), \
-                 patch('clipx.platforms.linux.desktop._run_paste_tool', side_effect=[failure, SimpleNamespace(returncode=0, stderr='')]) as run:
-                self.assertTrue(paste_to_active_window())
-                self.assertEqual([call.args[0][0] for call in run.call_args_list], ['wtype', 'ydotool'])
-
-    def test_missing_or_failed_ydotool_reports_manual_paste(self):
+    def test_missing_or_inaccessible_uinput_reports_manual_paste(self):
         driver = LinuxDesktopDriver()
-        for tool, response in ((None, None), ('/bin/ydotool', SimpleNamespace(returncode=2, stderr='cannot connect to daemon'))):
-            with patch.dict(os.environ, GNOME), patch('shutil.which', return_value=tool), \
-                 patch('clipx.platforms.linux.desktop._run_paste_tool', return_value=response):
+        for error in (FileNotFoundError('missing'), PermissionError('denied')):
+            with self.subTest(error=error), patch('clipx.platforms.linux.paste.os.open', side_effect=error):
                 result = driver.paste_to_previous()
             self.assertEqual((result.status, result.code, result.message),
                              (Status.UNAVAILABLE, 'paste_unavailable', MANUAL_PASTE))
 
-    def test_cancelled_paste_never_spawns_an_input_process(self):
+    def test_cancelled_paste_never_opens_device(self):
         cancelled = threading.Event()
         cancelled.set()
-        with patch('subprocess.Popen') as run:
-            self.assertFalse(paste_to_active_window(cancelled))
-        run.assert_not_called()
+        with patch('clipx.platforms.linux.paste.os.open') as open_device:
+            self.assertFalse(PasteKeyboard().paste(cancelled))
+        open_device.assert_not_called()
 
-    def test_input_helper_sanitizes_environment_and_kills_after_focus_return(self):
-        from clipx.platforms.linux.desktop import _run_paste_tool
+    def test_cancelled_device_warmup_does_not_send_keys(self):
         cancelled = threading.Event()
-        process = Mock()
-        process.poll.return_value = None
-        def start(*args, **kwargs):
+        def cancel_during_registration(*args):
             cancelled.set()
-            return process
-        with patch.dict(os.environ, {'DESKTOP_STARTUP_ID': 'startup', 'XDG_ACTIVATION_TOKEN': 'native'}), \
-             patch('subprocess.Popen', side_effect=start) as popen:
-            self.assertIsNone(_run_paste_tool(['ydotool', 'key'], cancelled))
-        process.kill.assert_called_once()
-        process.communicate.assert_called_once()
-        self.assertNotIn('DESKTOP_STARTUP_ID', popen.call_args.kwargs['env'])
-        self.assertNotIn('XDG_ACTIVATION_TOKEN', popen.call_args.kwargs['env'])
+        with patch('clipx.platforms.linux.paste.os.open', return_value=42), \
+             patch('clipx.platforms.linux.paste.fcntl.ioctl', side_effect=cancel_during_registration), \
+             patch('clipx.platforms.linux.paste.os.write') as write, \
+             patch('clipx.platforms.linux.paste.os.close'):
+            keyboard = PasteKeyboard()
+            self.assertFalse(keyboard.paste(cancelled))
+            keyboard.close()
+        write.assert_not_called()
 
-    def test_input_helper_communicates_and_returns_actual_process_status(self):
-        import sys
-        from clipx.platforms.linux.desktop import _run_paste_tool
-        result = _run_paste_tool([sys.executable, '-c', "import sys; sys.stderr.write('ready')"], threading.Event())
-        self.assertEqual((result.returncode, result.stderr), (0, 'ready'))
-
-    def test_hanging_input_helper_is_killed_at_deadline(self):
-        from clipx.platforms.linux.desktop import _run_paste_tool
-        process = Mock()
-        process.poll.return_value = None
-        with patch('subprocess.Popen', return_value=process), \
-             patch('clipx.platforms.linux.desktop.time.monotonic', side_effect=[0, 3]):
-            with self.assertRaises(subprocess.TimeoutExpired):
-                _run_paste_tool(['ydotool', 'key'], threading.Event())
-        process.kill.assert_called_once()
-        process.communicate.assert_called_once()
+    def test_short_write_destroys_device_and_next_paste_can_retry(self):
+        keyboard = PasteKeyboard()
+        with patch('clipx.platforms.linux.paste.os.open', side_effect=[42, 43]), \
+             patch('clipx.platforms.linux.paste.fcntl.ioctl') as ioctl, \
+             patch('clipx.platforms.linux.paste.os.write', side_effect=lambda fd, data: 1 if fd == 42 else len(data)), \
+             patch('clipx.platforms.linux.paste.os.close') as close, \
+             patch('clipx.platforms.linux.paste.time.monotonic', side_effect=[0, 2, 3, 5]):
+            self.assertFalse(keyboard.paste(threading.Event()))
+            self.assertEqual(ioctl.call_args.args, (42, 0x5502))
+            close.assert_called_once_with(42)
+            self.assertTrue(keyboard.paste(threading.Event()))
+            keyboard.close()
 
     def test_startup_completion_sends_remove_without_mapping_a_window(self):
         connection = Mock()
@@ -214,7 +201,7 @@ class LinuxCopyQtTests(unittest.TestCase):
 
     def test_paste_result_survives_worker_exit_and_runs_on_gui_thread(self):
         replies = []
-        with patch('clipx.platforms.linux.desktop.paste_to_active_window', return_value=False):
+        with patch.object(self.driver._paste_keyboard, 'paste', return_value=False):
             self.driver.paste_to_previous(lambda result: replies.append((result, QThread.currentThread())))
             self.wait_for(lambda: bool(replies))
         self.assertEqual(replies[0][0].message, MANUAL_PASTE)

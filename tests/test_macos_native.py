@@ -193,6 +193,16 @@ class MacOSNativeTests(unittest.TestCase):
                 window.deleteLater()
                 app.processEvents()
 
+    def test_accessibility_focus_bridge_loads_native_symbols_without_prompt(self):
+        import Quartz
+        from clipx.platforms.macos.focus import MacOSFocus
+
+        focus = MacOSFocus()
+        application = focus.application(os.getpid())
+        self.assertIsNotNone(application)
+        self.assertTrue(focus.same(application, focus.application(os.getpid())))
+        self.assertIsInstance(Quartz.CGPreflightPostEventAccess(), bool)
+
     def test_accessibility_api_reads_status_without_prompt(self):
         """Accessibility status is readable and the request path is exercised without prompting."""
         from clipx.platforms.macos.permissions import MacOSPermissions

@@ -85,11 +85,11 @@ class PlatformTests(unittest.TestCase):
         driver = MacOSDesktopDriver(appkit=Mock(), quartz=quartz, permissions=quartz)
         result = driver.paste_to_previous()
         self.assertFalse(result.ok)
-        quartz.CGEventPost.assert_not_called()
+        quartz.CGEventPostToPid.assert_not_called()
         quartz.can_paste.return_value = True
         driver.target = None
         self.assertFalse(driver.paste_to_previous().ok)
-        quartz.CGEventPost.assert_not_called()
+        quartz.CGEventPostToPid.assert_not_called()
 
     def test_macos_shortcut_write_and_pause_preserve_binding(self):
         """Writing, pausing and resuming keep the binding, and failed writes keep the old one."""
@@ -111,23 +111,68 @@ class PlatformTests(unittest.TestCase):
             self.assertEqual(backend.read(), 'Ctrl+Shift+L')
             backend.stop()
 
-    def test_macos_paste_waits_for_correct_target_and_times_out_without_keys(self):
-        """Paste waits for the target app to come forward and times out without posting keys."""
+    def _macos_paste_fixture(self):
         from clipx.platforms.macos.desktop import MacOSDesktopDriver
-        appkit, quartz, target = Mock(), Mock(), Mock()
+        appkit, quartz, target, focus = Mock(), Mock(), Mock(), Mock()
         quartz.can_paste.return_value = True
+        quartz.CGPreflightPostEventAccess.return_value = True
         target.isTerminated.return_value = False
-        target.activateWithOptions_.return_value = True
+        target.activateFromApplication_options_.return_value = True
         target.processIdentifier.return_value = 42
-        appkit.NSWorkspace.sharedWorkspace.return_value.frontmostApplication.return_value.processIdentifier.return_value = 99
-        driver = MacOSDesktopDriver(appkit=appkit, quartz=quartz, permissions=quartz)
-        driver.target = target
-        with patch('clipx.platforms.macos.desktop.time.monotonic', side_effect=[0, 2]):
-            self.assertFalse(driver.paste_to_previous().ok)
-        quartz.CGEventPost.assert_not_called()
-        appkit.NSWorkspace.sharedWorkspace.return_value.frontmostApplication.return_value.processIdentifier.return_value = 42
+        workspace = appkit.NSWorkspace.sharedWorkspace.return_value
+        workspace.frontmostApplication.return_value = target
+        focus.application.return_value = object()
+        focus.read.side_effect = ['window', 'field']
+        focus.same.side_effect = lambda first, second: first == second
+        driver = MacOSDesktopDriver(appkit=appkit, quartz=quartz, permissions=quartz, focus=focus)
+        driver.remember_target()
+        return driver, workspace, quartz, target, focus
+
+    def test_macos_paste_restores_window_then_field_before_posting_to_target(self):
+        driver, _, quartz, _, focus = self._macos_paste_fixture()
+        focus.read.side_effect = ['wrong window', 'window', 'wrong field', 'window', 'field']
+        focus.raise_window.side_effect = lambda window: quartz.CGEventPostToPid.assert_not_called()
+        focus.focus_element.side_effect = lambda field: quartz.CGEventPostToPid.assert_not_called()
         self.assertTrue(driver.paste_to_previous().ok)
-        self.assertEqual(quartz.CGEventPost.call_count, 2)
+        focus.raise_window.assert_called_once_with('window')
+        focus.focus_element.assert_called_once_with('field')
+        self.assertEqual([call.args[0] for call in quartz.CGEventPostToPid.call_args_list], [42, 42])
+
+    def test_macos_yields_activation_and_cancels_if_another_app_takes_focus(self):
+        driver, workspace, quartz, target, focus = self._macos_paste_fixture()
+        clipx, other = Mock(), Mock()
+        clipx.processIdentifier.return_value = os.getpid()
+        other.processIdentifier.return_value = 99
+        workspace.frontmostApplication.side_effect = [clipx, other]
+        focus.read.side_effect = AssertionError('focus must not be queried in another app')
+        self.assertEqual(driver.paste_to_previous().code, 'paste_cancelled')
+        driver.appkit.NSApplication.sharedApplication.return_value.yieldActivationToApplication_.assert_called_once_with(target)
+        target.activateFromApplication_options_.assert_called_once()
+        quartz.CGEventPostToPid.assert_not_called()
+
+    def test_macos_paste_times_out_when_original_field_cannot_be_confirmed(self):
+        driver, _, quartz, _, focus = self._macos_paste_fixture()
+        focus.read.side_effect = ['window', None]
+        with patch('clipx.platforms.macos.desktop.time.monotonic', side_effect=[0, 2]):
+            self.assertEqual(driver.paste_to_previous().code, 'paste_focus_unavailable')
+        quartz.CGEventPostToPid.assert_not_called()
+
+    def test_macos_paste_requires_event_posting_permission(self):
+        driver, _, quartz, _, _ = self._macos_paste_fixture()
+        quartz.CGPreflightPostEventAccess.return_value = False
+        self.assertEqual(driver.paste_to_previous().code, 'paste_permission_required')
+        quartz.CGEventPostToPid.assert_not_called()
+        quartz.CGRequestPostEventAccess.assert_not_called()
+
+    def test_macos_reopening_cancels_in_flight_paste(self):
+        driver, _, quartz, _, _ = self._macos_paste_fixture()
+        callback = Mock()
+        with patch('PyQt6.QtCore.QTimer.singleShot') as timer:
+            driver.paste_to_previous(callback)
+            driver.cancel_paste()
+            timer.call_args.args[1]()
+        self.assertEqual(callback.call_args.args[0].code, 'paste_cancelled')
+        quartz.CGEventPostToPid.assert_not_called()
 
     def test_macos_shortcut_save_failure_unregisters_new_and_keeps_old(self):
         """A persistence failure unregisters the new hot key and restores the previous handle."""

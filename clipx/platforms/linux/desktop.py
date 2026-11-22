@@ -1,88 +1,15 @@
 """Linux activation lifecycle and asynchronous automatic paste integration."""
 import logging
 import os
-import shutil
-import subprocess
 import threading
-import time
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 from clipx.platforms.base import Result, Status
-from .processes import helper_environment
+from .paste import PasteKeyboard
 
 logger = logging.getLogger('clipx.desktop')
 MANUAL_PASTE = 'Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.'
-
-
-def is_gnome_wayland():
-    """Detect the desktop session independently of an XWayland DISPLAY."""
-    session = os.environ.get('XDG_SESSION_TYPE', '').lower()
-    wayland = session == 'wayland' or (not session and bool(os.environ.get('WAYLAND_DISPLAY')))
-    desktop = ':'.join(os.environ.get(key, '') for key in (
-        'XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP', 'DESKTOP_SESSION')).lower()
-    return wayland and any(name in desktop for name in ('gnome', 'ubuntu'))
-
-
-def _run_paste_tool(command, cancelled):
-    """Run a helper for at most two seconds, terminating it when focus returns."""
-    process = subprocess.Popen(command, env=helper_environment(),
-                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    deadline = time.monotonic() + 2
-    try:
-        while True:
-            if cancelled is not None and cancelled.is_set():
-                return None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command[0], 2)
-            try:
-                _, stderr = process.communicate(timeout=min(.05, remaining))
-                return subprocess.CompletedProcess(command, process.returncode, stderr=stderr)
-            except subprocess.TimeoutExpired:
-                continue
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.communicate()
-
-
-def paste_to_active_window(cancelled=None):
-    """Try compatible input tools with bounded waits and failure fallback.
-
-    GNOME/Wayland uses ydotool; other sessions try wtype then ydotool. No
-    command inherits startup tokens, and diagnostics never contain clipboard
-    contents. Cancellation is checked before each attempt.
-
-    Args:
-        cancelled (threading.Event | None): Set when search regains focus.
-
-    Returns:
-        bool: Whether a helper reported successful key injection.
-    """
-    commands = [('wtype', ['-M', 'ctrl', '-k', 'v', '-m', 'ctrl']),
-                ('ydotool', ['key', '29:1', '47:1', '47:0', '29:0'])]
-    if is_gnome_wayland():
-        commands = commands[1:]
-    for tool, args in commands:
-        if cancelled is not None and cancelled.is_set():
-            return False
-        if not shutil.which(tool):
-            logger.info('Automatic paste backend %s is not installed', tool)
-            continue
-        try:
-            result = _run_paste_tool([tool, *args], cancelled)
-            if result is None:
-                return False
-            if result.returncode == 0:
-                return True
-            logger.warning('Automatic paste backend %s exited with code %s: %s',
-                           tool, result.returncode, (result.stderr or '').strip()[:300])
-        except subprocess.TimeoutExpired:
-            logger.warning('Automatic paste backend %s timed out', tool)
-        except OSError as exc:
-            logger.warning('Automatic paste backend %s could not start: %s', tool, exc)
-    return False
 
 
 class LinuxDesktopDriver(QObject):
@@ -97,6 +24,7 @@ class LinuxDesktopDriver(QObject):
         self._activation_token = ''
         self._pending_startups = set()
         self._finished_startups = set()
+        self._paste_keyboard = PasteKeyboard()
         self._paste_cancelled = threading.Event()
         self._paste_ready.connect(self._deliver_paste, Qt.ConnectionType.QueuedConnection)
 
@@ -165,7 +93,7 @@ class LinuxDesktopDriver(QObject):
             self.finish_startup(startup_id)
 
     def cancel_paste(self):
-        """Cancel pending paste and stop a helper that is still running."""
+        """Cancel a paste that has not sent keys yet."""
         self._paste_cancelled.set()
 
     def paste_to_previous(self, callback=None):
@@ -182,9 +110,9 @@ class LinuxDesktopDriver(QObject):
         cancelled = self._paste_cancelled = threading.Event()
 
         def perform():
-            """Map a bounded helper invocation to an operation result."""
+            """Map keyboard injection to an operation result."""
             try:
-                succeeded = paste_to_active_window(cancelled)
+                succeeded = self._paste_keyboard.paste(cancelled)
             except Exception:
                 logger.exception('Automatic paste failed before completion')
                 succeeded = False
@@ -210,5 +138,6 @@ class LinuxDesktopDriver(QObject):
     def stop(self):
         """Cancel pending paste and finish any outstanding startup announcements."""
         self.cancel_paste()
+        self._paste_keyboard.close()
         for startup_id in tuple(self._pending_startups):
             self.finish_startup(startup_id)

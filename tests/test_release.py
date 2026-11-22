@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import runpy
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -17,6 +18,37 @@ from tools.release import (architecture, checksums, project_version, validate_ta
 
 class ReleaseTests(unittest.TestCase):
     """Verify frozen command construction, version tags and release artifacts."""
+
+    def test_uinput_maintainer_scripts_handle_configure_removal_and_inactive_udev(self):
+        packaging = Path(__file__).resolve().parents[1] / 'packaging/linux'
+        with tempfile.TemporaryDirectory() as folder:
+            commands = Path(folder)
+            helpers = {
+                'modprobe': 'exit 0',
+                'udevadm': 'echo "$*"\n[ "${TEST_UDEV_INACTIVE:-}" != 1 ]',
+                'timeout': 'shift\nexec "$@"',
+            }
+            for name, body in helpers.items():
+                helper = commands / name
+                helper.write_text(f'#!/bin/sh\n{body}\n')
+                helper.chmod(0o755)
+
+            def run(script, action, **environment):
+                return subprocess.run(['/bin/sh', packaging / script, action],
+                    env={'PATH': folder, **environment}, capture_output=True, text=True, check=True)
+
+            expected = ['control --reload',
+                        'trigger --action=change --subsystem-match=misc --sysname-match=uinput --settle']
+            self.assertEqual(run('postinst', 'configure').stdout.splitlines(), expected)
+            self.assertEqual(run('postinst', 'configure').stdout.splitlines(), expected)
+            self.assertEqual(run('postinst', 'configure', DPKG_ROOT='/alternate').stdout, '')
+            self.assertEqual(run('postinst', 'abort-upgrade').stdout, '')
+            inactive = run('postinst', 'configure', TEST_UDEV_INACTIVE='1')
+            self.assertEqual(inactive.stdout.splitlines(), expected[:1])
+            self.assertIn('udev indisponível', inactive.stderr)
+            self.assertEqual(run('postrm', 'upgrade').stdout, '')
+            for action in ('remove', 'purge'):
+                self.assertEqual(run('postrm', action).stdout.splitlines(), expected[:1])
 
     def test_macos_instructions_explain_unnotarized_install_and_optional_signing(self):
         instructions = macos_install_instructions(False)

@@ -437,22 +437,22 @@ class ClipXMainWindow(QMainWindow):
             return
         self._copy_busy = True
         self.action_bar.primary.setEnabled(False)
-        self.clipboard_service.copy_async(clip, lambda result: self._copy_finished(clip, paste, result))
+        generation = getattr(self, '_paste_generation', 0)
+        self.clipboard_service.copy_async(clip, lambda result: self._copy_finished(clip, paste, generation, result))
 
-    def _copy_finished(self, clip, paste, result):
+    def _copy_finished(self, clip, paste, generation, result):
         """Close and optionally paste only after a completed successful copy."""
         self._copy_busy = False
         self.action_bar.primary.setEnabled(self.clip_list.get_selected_clip() is not None)
         if not result.ok:
             self.show_copy_failure(clip, result)
             return
+        if paste and generation != getattr(self, '_paste_generation', 0):
+            self._wait_for_paste(generation, time.monotonic())
+            return
         self.close()
         if paste:
-            if self.platform.name == 'linux':
-                generation = getattr(self, '_paste_generation', 0)
-                QTimer.singleShot(100, lambda: self._wait_for_paste(generation, time.monotonic() + 1))
-            else:
-                QTimer.singleShot(100, self._paste)
+            QTimer.singleShot(100, lambda: self._wait_for_paste(generation, time.monotonic() + 1))
 
     def show_copy_failure(self, clip, result):
         """Show themed image failures without losing the selection or search."""
@@ -476,10 +476,11 @@ class ClipXMainWindow(QMainWindow):
         self.search_bar.focus_input()
 
     def _wait_for_paste(self, generation, deadline):
-        """Wait for Linux search dismissal and cancel when it is reopened."""
+        """Wait for search dismissal and cancel when it is reopened."""
+        shortcut = '⌘V' if self.platform.name == 'macos' else 'Ctrl+V'
         if generation != getattr(self, '_paste_generation', 0):
             self.show_result(Result(Status.UNAVAILABLE,
-                'Conteúdo copiado. Colagem cancelada porque a pesquisa foi reaberta; use Ctrl+V.',
+                f'Conteúdo copiado. Colagem cancelada porque a pesquisa foi reaberta; use {shortcut}.',
                 'paste_cancelled'))
             return
         if not self.isVisible() and not self.isActiveWindow():
@@ -487,7 +488,7 @@ class ClipXMainWindow(QMainWindow):
             return
         if time.monotonic() >= deadline:
             self.show_result(Result(Status.UNAVAILABLE,
-                'Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.',
+                f'Conteúdo copiado. Não foi possível colar automaticamente; use {shortcut}.',
                 'paste_unavailable'))
             return
         QTimer.singleShot(25, lambda: self._wait_for_paste(generation, deadline))
@@ -502,7 +503,9 @@ class ClipXMainWindow(QMainWindow):
             self.platform.desktop.paste_to_previous(callback=self.show_result)
         except Exception:
             logging.getLogger('clipx.desktop').exception('Could not request automatic paste')
-            self.show_result(Result(Status.UNAVAILABLE, 'Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.', 'paste_unavailable'))
+            shortcut = '⌘V' if self.platform.name == 'macos' else 'Ctrl+V'
+            self.show_result(Result(Status.UNAVAILABLE,
+                f'Conteúdo copiado. Não foi possível colar automaticamente; use {shortcut}.', 'paste_unavailable'))
 
     def show_result(self, result):
         """Store and display an operation result and notify listeners.
@@ -578,7 +581,7 @@ class ClipXMainWindow(QMainWindow):
         Args:
             event (QShowEvent): Show event forwarded to the base class.
         """
-        if self.platform.name == 'linux':
+        if self.platform.name in ('linux', 'macos'):
             self._paste_generation = getattr(self, '_paste_generation', 0) + 1
             self.platform.desktop.cancel_paste()
         super().showEvent(event)
@@ -617,7 +620,7 @@ class ClipXMainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.Type.ActivationChange:
             if self.isActiveWindow():
-                if self.platform.name == 'linux':
+                if self.platform.name in ('linux', 'macos'):
                     self._paste_generation = getattr(self, '_paste_generation', 0) + 1
                     self.platform.desktop.cancel_paste()
                 self.search_bar.focus_input()

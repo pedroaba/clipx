@@ -137,7 +137,7 @@ A captura consulta `NSPasteboard.changeCount` a cada aproximadamente **250 ms**,
 
 Acionar “Copiar e colar” copia o conteúdo selecionado e tenta colar no aplicativo que estava ativo antes da pesquisa. O ClipX confirma o foco no destino antes de enviar **⌘V** e desiste após 1 segundo se não conseguir ativá-lo.
 
-A colagem automática requer a autorização de Acessibilidade/controle do macOS. Sem ela, o conteúdo continua copiado e pode ser colado manualmente. Use **Autorizar colagem no macOS** na barra de menus para abrir a solicitação nativa; o aplicativo não repete solicitações automaticamente. Restrições de leitura do clipboard também são respeitadas e aparecem como estado de captura.
+Na colagem automática, o ClipX usa a janela e o campo que estavam em foco ao abrir a busca. Se o campo original não puder ser confirmado, a colagem manual com ⌘V permanece disponível. A colagem automática requer a autorização de Acessibilidade/controle do macOS. Sem ela, o conteúdo continua copiado e pode ser colado manualmente. Use **Autorizar colagem no macOS** na barra de menus para abrir a solicitação nativa; o aplicativo não repete solicitações automaticamente. Restrições de leitura do clipboard também são respeitadas e aparecem como estado de captura.
 
 Ao executar por uv, a autorização pode ficar associada ao interpretador Python ou ao aplicativo lançador, e pode precisar ser revista quando o interpretador mudar. O empacotamento gera bundle `.app` e DMG; assinatura Developer ID e notarização dependem dos secrets Apple descritos em [Builds e releases](packaging/README.md). Inicialização automática no login não está incluída.
 
@@ -162,13 +162,22 @@ A bandeja do GNOME precisa de suporte a AppIndicator/KStatusNotifierItem, como U
 
 ### Cópia e colagem automática
 
-A cópia de texto e imagem executa em segundo plano. **Copiar apenas** fecha a pesquisa após confirmar a cópia; **Copiar e colar** também espera a janela ficar oculta e inativa antes de enviar Ctrl+V. Reabrir ou reativar a pesquisa cancela uma colagem pendente. A abertura encerra explicitamente o anúncio de inicialização do desktop para não deixar seu indicador de carregamento ativo; tokens de abertura não são repassados aos comandos de cópia ou colagem.
+A cópia de texto e imagem executa em segundo plano. **Copiar apenas** fecha a pesquisa após confirmar a cópia; **Copiar e colar** também espera a janela ficar oculta e inativa antes de enviar Ctrl+V. Reabrir ou reativar a pesquisa cancela uma colagem pendente. A abertura encerra explicitamente o anúncio de inicialização do desktop para não deixar seu indicador de carregamento ativo; tokens de abertura são removidos do ambiente dos comandos de cópia.
 
-No **GNOME/Ubuntu com Wayland**, inclusive quando `DISPLAY` aponta para XWayland, a colagem usa `ydotool`. Instale o cliente e o daemon fornecidos pela sua distribuição (no Ubuntu/Debian, comece por `sudo apt install ydotool`; a separação dos pacotes varia). O serviço `ydotoold` precisa estar ativo e ter acesso a `/dev/uinput`; o usuário do ClipX precisa conseguir acessar seu socket. Quando o serviço usa um caminho personalizado, configure `YDOTOOL_SOCKET` no ambiente do ClipX. Os nomes das unidades systemd e as regras de acesso variam conforme a distribuição: siga o pacote instalado e a [documentação do ydotool](https://github.com/ReimuNotMoe/ydotool).
+O ClipX envia apenas Ctrl+V por um teclado virtual do Linux, via `/dev/uinput`. O mesmo módulo atende Wayland e X11, inclusive aplicativos XWayland, sem instalar `ydotool`, `wtype` ou um serviço de entrada. A primeira colagem pode levar cerca de um segundo a mais enquanto o compositor reconhece o teclado virtual. O ClipX reutiliza o dispositivo nas colagens seguintes.
 
-O ClipX não instala nem inicia esse serviço e não altera permissões automaticamente. Nos demais ambientes, tenta `wtype` e recorre a `ydotool` se o primeiro estiver ausente, falhar ou exceder o timeout. Cada ferramenta tem um limite de dois segundos; a pesquisa continua responsiva durante a espera.
+O instalador `.deb` configura `/dev/uinput` automaticamente na instalação e na atualização. Em um desktop com systemd/udev ativo, a regra concede acesso à conta da sessão local ativa. Qualquer processo dessa conta com acesso ao dispositivo pode simular entrada. Ao remover o pacote, uma permissão já aplicada pode durar até o próximo boot.
 
-Se a colagem não estiver disponível, o conteúdo permanece no clipboard e a interface informa **“Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.”** Os logs identificam ferramenta ausente, falha do serviço ou timeout, sem registrar o conteúdo copiado. Ao usar o serviço do ClipX, consulte `journalctl --user -u clipx-daemon.service -b`.
+Se estiver rodando **a partir do código-fonte** e `test -w /dev/uinput` falhar, um administrador pode configurar esse acesso manualmente:
+
+```bash
+echo uinput | sudo tee /etc/modules-load.d/clipx-uinput.conf
+echo 'SUBSYSTEM=="misc", KERNEL=="uinput", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-clipx-uinput.rules
+```
+
+Reinicie o Linux e confirme com `test -w /dev/uinput && echo "uinput disponível"` em um terminal da sessão gráfica.
+
+Se o dispositivo estiver indisponível, o conteúdo permanece no clipboard e a interface informa **“Conteúdo copiado. Não foi possível colar automaticamente; use Ctrl+V.”** Para diagnóstico do serviço do ClipX, consulte `journalctl --user -u clipx-daemon.service -b`.
 
 O material visual Linux é desenhado pelo Qt: grafite predominantemente opaco, bordas sutis e camadas. Não requer extensões para blur e não promete desfoque real do desktop.
 
@@ -356,7 +365,7 @@ Permanecem verificações manuais: colagem autorizada em aplicativos de terceiro
 ## Solução de problemas
 
 - **Sem captura:** confira o estado na bandeja; no Linux, verifique DISPLAY/XWayland/XFixes ou data-control; no macOS, as permissões de leitura.
-- **Copia, mas não cola:** no macOS use Autorizar colagem; no Linux confira wtype/ydotool. A colagem manual continua disponível.
+- **Copia, mas não cola:** no macOS use Autorizar colagem; no Linux confira o acesso a `/dev/uinput`. A colagem manual continua disponível.
 - **Crash ao clicar na bandeja no macOS 27:** há uma proteção específica para o callback de menu do Qt 6.11, que consultava `clickCount` de eventos `KitDefined`. A abertura do menu não dispara mais a ativação da pesquisa; use **Open** para pesquisar. Reinicie o ClipX após atualizar o código.
 - **Sem ícone na bandeja GNOME:** confira AppIndicator/KStatusNotifierItem.
 - **Atalho macOS não registrado:** escolha outra combinação em Atalhos; o aplicativo não altera atalhos reservados do sistema.

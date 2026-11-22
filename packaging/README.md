@@ -40,7 +40,8 @@ Python do builder. Os testes de captura usam texto fictício e banco temporário
 sem conectar ao clipboard ou à sessão gráfica do host.
 
 O DEB inclui o executável em `/opt/clipx`, launcher em `/usr/bin/clipx`, ícone e entrada
-do menu. Não modifica atalhos, serviços ou preferências de usuários durante a instalação.
+do menu. O `postinst` carrega `uinput` quando necessário e reaplica a regra de acesso
+à sessão gráfica local durante a instalação e atualização.
 Para instalar em um desktop Ubuntu/Debian compatível:
 
 ```bash
@@ -51,7 +52,8 @@ clipx
 Ajuste a versão/arquitetura no nome. Abra Preferências → Atalhos para escolher a
 combinação global no GNOME. A instalação não configura inicialização automática;
 `clipx tray` inicia somente na bandeja. GNOME precisa de suporte a AppIndicator;
-Wayland depende de data-control. Colagem automática usa wtype/ydotool quando disponíveis.
+a captura Wayland depende de data-control. A colagem automática usa um [teclado virtual
+via `/dev/uinput`](../README.md#cópia-e-colagem-automática).
 
 ## Gerar o DMG no Mac
 
